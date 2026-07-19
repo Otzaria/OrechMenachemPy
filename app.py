@@ -118,7 +118,7 @@ class MainWindow(QWidget):
         self.spin_normal.setRange(3.0, 72.0)
         self.spin_normal.setSingleStep(0.5)
         self.spin_normal.setDecimals(1)
-        self.spin_normal.setValue(16.0)
+        self.spin_normal.setValue(12.0)
         grid.addWidget(self.spin_normal, 0, 1)
 
         grid.addWidget(QLabel("גודל הערות רגיל:"), 0, 2)
@@ -126,7 +126,7 @@ class MainWindow(QWidget):
         self.spin_notes.setRange(0.0, 72.0)
         self.spin_notes.setSingleStep(0.5)
         self.spin_notes.setDecimals(1)
-        self.spin_notes.setValue(14.0)
+        self.spin_notes.setValue(10.0)
         grid.addWidget(self.spin_notes, 0, 3)
 
         self.btn_suggest = QPushButton("זהה גדלים מהקובץ הראשון")
