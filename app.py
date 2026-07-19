@@ -135,7 +135,7 @@ class MainWindow(QWidget):
 
         grid.addWidget(QLabel("תיקיית פלט:"), 1, 0)
         self.edit_out = QLineEdit()
-        self.edit_out.setPlaceholderText("ריק = לשמור ליד קובץ המקור")
+        self.edit_out.setPlaceholderText("ריק = שומר ליד קובץ המקור")
         grid.addWidget(self.edit_out, 1, 1, 1, 3)
         self.btn_out = QPushButton("בחירה…")
         self.btn_out.clicked.connect(self.pick_out_dir)
