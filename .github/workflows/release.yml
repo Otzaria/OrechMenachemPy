@@ -47,13 +47,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install "pyinstaller>=6,<7"
 
+      # הבנייה מוגדרת ב-OrechMenachem.spec, שמשאיר בחבילה רק את חלקי Qt
+      # ו-lxml שהאפליקציה באמת טוענת. אין להוסיף כאן --collect-all: הוא
+      # גורר את כל Qt (כולל WebEngine) ומשלש את גודל הקובץ.
       - name: Build single-file portable EXE
-        run: >
-          python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name OrechMenachem
-          --collect-all PyQt5
-          --collect-all lxml
-          app.py
+        run: python -m PyInstaller --noconfirm --clean OrechMenachem.spec
 
       - name: Verify build output
         shell: pwsh
@@ -61,7 +59,14 @@ jobs:
           if (-not (Test-Path "dist\OrechMenachem.exe")) {
             throw "The EXE was not created."
           }
-          Get-Item "dist\OrechMenachem.exe" | Format-List Name, Length
+          $exe = Get-Item "dist\OrechMenachem.exe"
+          $mb = [math]::Round($exe.Length / 1MB, 1)
+          Write-Host "OrechMenachem.exe: $mb MB"
+          # שומר מפני נסיגה שמחזירה את כל Qt לחבילה.
+          if ($mb -gt 30) {
+            throw "The EXE grew to $mb MB; expected about 18 MB. Check OrechMenachem.spec."
+          }
+          "### EXE size: $mb MB" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

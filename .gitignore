@@ -5,3 +5,6 @@ __pycache__/
 build/
 dist/
 *.spec
+# מרשם הבנייה הרשמי הוא קוד מקור — הוא מה שמשאיר את ה-EXE קטן, ובלעדיו
+# זרימת ה-Release נכשלת.
+!OrechMenachem.spec

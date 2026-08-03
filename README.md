@@ -40,14 +40,28 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## בדיקות אוטומטיות ב-GitHub
+
+הקובץ `.github/workflows/tests.yml` מריץ את כל הבדיקות בכל `push` ובכל
+Pull Request. הוא אינו בונה EXE ואינו נוגע ב-Releases.
+
 ## בניית EXE נייד ב-GitHub
 
-הקובץ `.github/workflows/build-exe.yml` מריץ את כל הבדיקות אוטומטית בכל
-`push`. הוא גם מאפשר לבנות EXE בודד ונייד של Windows ולהעלות אותו ל-Release
-ב-GitHub: נכנסים ללשונית **Actions**, בוחרים **Test, build, and release**,
-לוחצים **Run workflow**, ומזינים מספר גרסה כגון `1.2.3`. בסיום ההרצה נוצר
-Release עם התגית `v1.2.3` ועם `OrechMenachem.exe` להורדה. עותק נוסף נשמר
-כ-artifact בשם `OrechMenachem-Windows-portable`.
+הקובץ `.github/workflows/release.yml` רץ בהרצה ידנית בלבד: נכנסים ללשונית
+**Actions**, בוחרים **Build and release EXE**, לוחצים **Run workflow**,
+ומזינים מספר גרסה כגון `1.2.3`. בסיום ההרצה נוצר Release עם התגית `v1.2.3`
+ועם `OrechMenachem.exe` להורדה. עותק נוסף נשמר כ-artifact בשם
+`OrechMenachem-Windows-portable`. הזרימה הזו אינה מריצה בדיקות.
+
+הבנייה מוגדרת ב-`OrechMenachem.spec`, שמשאיר בחבילה רק את חלקי Qt ו-lxml
+שהאפליקציה באמת טוענת — כך ה-EXE שוקל כ-18MB במקום כ-70MB. **אין להוסיף
+`--collect-all PyQt5`**: הוא גורר את כל Qt, כולל `Qt5WebEngineCore.dll`
+(97MB), OpenGL בתוכנה וכל התרגומים. לבנייה מקומית:
+
+```
+pip install -r requirements.txt "pyinstaller>=6,<7"
+python -m PyInstaller --noconfirm --clean OrechMenachem.spec
+```
 
 ### בדיקות מקומיות
 
