@@ -129,8 +129,16 @@ def test_convert_file_uses_each_files_own_reference_sizes(write_docx, tmp_path):
 
 
 # ------------------------------------------------------------------- CLI
-def run_cli(*args):
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+def run_cli(*args, io_encoding=None):
+    """
+    מריץ את ה-CLI. io_encoding מדמה קונסולה שאינה UTF-8 — כך נבדק שהכלי
+    אינו נשען על קידוד הקונסולה של המכונה שמריצה אותו.
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
+    if io_encoding:
+        env["PYTHONIOENCODING"] = io_encoding
     return subprocess.run(
         [sys.executable, "converter.py", *args],
         cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, encoding="utf-8",
@@ -173,3 +181,17 @@ def test_cli_requires_the_normal_size_argument(docx_with_note):
     result = run_cli(str(docx_with_note))
     assert result.returncode != 0
     assert "--normal" in result.stderr
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "ascii", "cp862"])
+def test_cli_prints_hebrew_paths_on_a_non_hebrew_console(docx_with_note, encoding):
+    """
+    שם קובץ ההערות עברי, וקידוד ברירת המחדל של stdout הוא קידוד הקונסולה.
+    על מכונה באנגלית (וכך על הרנר של GitHub) הוא cp1252, ובלי הגנה מפורשת
+    ה-print היה מפיל את הכלי אחרי המרה שהצליחה.
+    """
+    result = run_cli(str(docx_with_note), "--normal", "11", "--notes", "10",
+                     io_encoding=encoding)
+    assert result.returncode == 0, result.stderr
+    assert "UnicodeEncodeError" not in result.stderr
+    assert "OK:" in result.stdout

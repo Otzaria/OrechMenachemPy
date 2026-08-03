@@ -16,6 +16,9 @@ jobs:
     name: Build and publish portable EXE
     runs-on: windows-latest
     env:
+      # הרנר של GitHub באנגלית, ולכן קידוד הקונסולה שלו הוא cp1252 שאינו
+      # מכיל עברית. בלי זה כל print בעברית מפיל את השלב ב-UnicodeEncodeError.
+      PYTHONIOENCODING: utf-8
       # הסודות ממופים לסביבת המשרה כי הקשר secrets אינו זמין ב-if של שלב,
       # וכך אפשר לדלג על החתימה בנקיון כשהתעודה לא הוגדרה עדיין.
       SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
@@ -117,10 +120,26 @@ jobs:
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "signtool.exe was not found on the runner." }
 
+          # ניקוי לפני הפענוח: base64 שהודבק מקובץ עלול לשאת BOM, רווחים
+          # ושורות חדשות. FromBase64String מתעלם מרווחים אבל נופל על BOM,
+          # והשגיאה שהוא זורק אינה מרמזת על הסיבה.
+          $encoded = ($env:SIGNING_CERT_BASE64 -replace '\s', '').Trim(
+            [char]0xFEFF, [char]0x200B)
+          if ($encoded.Length -eq 0) {
+            throw "הסוד SIGNING_CERT_BASE64 ריק אחרי ניקוי."
+          }
+
           $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
           try {
-            [IO.File]::WriteAllBytes(
-              $pfx, [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
+            try {
+              $der = [Convert]::FromBase64String($encoded)
+            }
+            catch {
+              throw ("הסוד SIGNING_CERT_BASE64 אינו base64 תקין. יש לייצר " +
+                "אותו כך: [Convert]::ToBase64String(" +
+                "[IO.File]::ReadAllBytes('certificate.pfx')) | Set-Clipboard")
+            }
+            [IO.File]::WriteAllBytes($pfx, $der)
 
             # signtool מסרב לחתום בתעודה שפג תוקפה ומדווח רק
             # "No certificates were found that met all the given criteria",

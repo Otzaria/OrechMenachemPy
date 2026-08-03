@@ -205,6 +205,65 @@ def test_main_requires_a_version_argument():
         main(["--output", "out.txt"])
 
 
+# ------------------------------------------- הרצה כתהליך על קונסולה לא-עברית
+def run_script(tmp_path, version, io_encoding=None):
+    """מריץ את הכלי כתהליך נפרד, עם קידוד קונסולה נתון."""
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
+    if io_encoding:
+        env["PYTHONIOENCODING"] = io_encoding
+    return subprocess.run(
+        [sys.executable, "stamp_version.py",
+         "--version", version,
+         "--template", TEMPLATE_PATH,
+         "--output", str(tmp_path / "version_info.generated.txt")],
+        cwd=PROJECT_ROOT, env=env, capture_output=True, text=True,
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "ascii", "cp1255"])
+def test_the_script_survives_a_console_that_cannot_show_hebrew(tmp_path, encoding):
+    """
+    הכשל שהתגלה ב-GitHub Actions: הרנר באנגלית, קידוד stdout שלו cp1252,
+    והודעת ההצלחה בעברית הפילה את השלב ב-UnicodeEncodeError אחרי שהקובץ
+    כבר נכתב בהצלחה.
+    """
+    result = run_script(tmp_path, "1.0.2", io_encoding=encoding)
+    assert result.returncode == 0, result.stderr
+    assert "UnicodeEncodeError" not in result.stderr
+    assert (tmp_path / "version_info.generated.txt").is_file()
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "ascii"])
+def test_error_messages_also_survive_a_limited_console(tmp_path, encoding):
+    result = run_script(tmp_path, "not-a-version", io_encoding=encoding)
+    assert result.returncode == 2
+    assert "UnicodeEncodeError" not in result.stderr
+
+
+def test_the_script_works_without_any_encoding_environment(tmp_path):
+    result = run_script(tmp_path, "3.2.1")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "version_info.generated.txt").is_file()
+
+
+def test_use_utf8_output_tolerates_a_replaced_stream(monkeypatch):
+    """בבדיקות ובסביבות משובצות sys.stdout עשוי להיות אובייקט ללא reconfigure."""
+    from stamp_version import use_utf8_output
+
+    class Bare:
+        pass
+
+    monkeypatch.setattr("sys.stdout", Bare())
+    monkeypatch.setattr("sys.stderr", Bare())
+    use_utf8_output()  # לא אמור לזרוק
+
+
 # ------------------------------------------------- התבנית שבמאגר
 def test_the_repository_template_is_usable(template):
     """שומר על התבנית תקינה — היא הקלט של כל בנייה."""

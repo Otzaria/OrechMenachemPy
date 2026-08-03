@@ -31,6 +31,24 @@ class VersionInfoError(Exception):
     pass
 
 
+def use_utf8_output():
+    """
+    מכריח את הפלט ל-UTF-8 כדי שהודעות בעברית לא יפילו את הכלי.
+
+    קידוד ברירת המחדל של stdout בפייתון הוא קידוד הקונסולה. על מכונת בנייה
+    באנגלית זהו cp1252, שאינו מכיל אותיות עבריות, ולכן print יזרוק
+    UnicodeEncodeError ויפיל את הזרימה כולה בגלל הודעת הצלחה.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue  # פלט שהוחלף (למשל בבדיקות) — אין מה להגדיר
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def parse_version(raw):
     """'v1.2.3' -> ((1, 2, 3, 0), '1.2.3.0'). מקבל 1 עד 4 חלקים מספריים."""
     text = (raw or "").strip()
@@ -93,6 +111,7 @@ def stamp(template_text, version, exe_filename=None):
 
 
 def main(argv=None):
+    use_utf8_output()
     ap = argparse.ArgumentParser(
         description="הזרקת מספר הגרסה של ה-Release לתוך version_info.txt")
     ap.add_argument("--version", required=True,

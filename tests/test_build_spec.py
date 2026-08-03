@@ -436,6 +436,24 @@ def test_an_untrusted_certificate_chain_warns_instead_of_failing(workflows):
     assert "verify /pa" not in sign
 
 
+def test_the_secret_is_cleaned_before_it_is_decoded(workflows):
+    """base64 שהודבק מקובץ UTF-16 נושא BOM, ו-FromBase64String נופל עליו."""
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "-replace '\\s', ''" in sign
+    assert "0xFEFF" in sign
+
+
+def test_a_malformed_secret_explains_how_to_produce_a_good_one(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "ToBase64String" in sign
+    assert "Set-Clipboard" in sign
+
+
+def test_an_empty_secret_is_caught_before_signing(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "$encoded.Length -eq 0" in sign
+
+
 def test_an_expired_certificate_fails_with_a_clear_message(workflows):
     """signtool מדווח על תעודה פגה בהודעה סתומה; הזרימה מסבירה במקומו."""
     sign = release_steps(workflows)["Sign the EXE"]["run"]
@@ -466,8 +484,14 @@ def test_the_certificate_never_comes_from_the_repository(workflows):
     commands = " ".join(
         step.get("run", "")
         for step in workflows["release.yml"]["jobs"]["release"]["steps"])
-    assert "certificate.pfx" not in commands
-    assert "FromBase64String($env:SIGNING_CERT_BASE64)" in commands
+    assert "$env:SIGNING_CERT_BASE64" in commands
+    assert "FromBase64String($encoded)" in commands
+    # התעודה נכתבת לתיקייה הזמנית של הרנר, ו-signtool מקבל רק אותה.
+    assert 'Join-Path $env:RUNNER_TEMP "signing.pfx"' in commands
+    assert '"/f", $pfx' in commands
+    for repo_path in ("/f certificate.pfx", '"/f", "certificate.pfx"',
+                      ".\\certificate.pfx"):
+        assert repo_path not in commands
 
 
 def test_signing_happens_before_publishing(workflows):
@@ -486,13 +510,32 @@ def test_the_release_publishes_the_versioned_file(workflows):
 
 
 # ---------------------------------------------------------- שמירת התעודה
-@pytest.mark.parametrize("pattern", ["*.pfx", "*.p12", "*.key"])
-def test_signing_certificates_are_gitignored(pattern):
+@pytest.mark.parametrize(
+    "pattern", ["*.pfx", "*.p12", "*.key", "*base64*", "*.b64"],
+)
+def test_signing_secrets_are_gitignored(pattern):
     with open(os.path.join(PROJECT_ROOT, ".gitignore"), encoding="utf-8") as fh:
         assert pattern in fh.read().split()
 
 
-def test_no_certificate_is_tracked_in_git():
+@pytest.mark.parametrize(
+    "name",
+    ["certificate.pfx", "cert.p12", "signing.key", "cert.b64",
+     "base64 של קובץ ה-pfx.txt", "2base64 של קובץ ה-pfx.txt",
+     "my-base64-cert.txt"],
+)
+def test_git_would_ignore_every_shape_of_certificate_file(name):
+    """base64 של pfx הוא מפתח פרטי לכל דבר; שם הקובץ לא אמור לשנות."""
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", "--", name],
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, "%s אינו מסונן" % name
+
+
+def test_no_certificate_material_is_tracked_in_git():
     import subprocess
 
     result = subprocess.run(
@@ -500,4 +543,5 @@ def test_no_certificate_is_tracked_in_git():
     )
     tracked = result.stdout.lower().split()
     assert not [f for f in tracked
-                if f.endswith((".pfx", ".p12", ".key"))]
+                if f.endswith((".pfx", ".p12", ".key", ".b64"))
+                or "base64" in f]

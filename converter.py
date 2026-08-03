@@ -587,8 +587,28 @@ def convert_file(src_path, normal_pt, notes_pt, out_dir=None,
 
 
 # ------------------------------------------------------------------ CLI
+def _use_utf8_output():
+    """
+    מכריח את הפלט ל-UTF-8 כדי שנתיבים עבריים לא יפילו את ה-CLI.
+
+    שמות הפלט כוללים "הערות על …", וקידוד ברירת המחדל של stdout הוא קידוד
+    הקונסולה — שבמכונה באנגלית אינו מכיל עברית. בלי זה print יזרוק
+    UnicodeEncodeError אחרי המרה שהצליחה.
+    """
+    import sys as _sys
+    for stream in (_sys.stdout, _sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 if __name__ == "__main__":
     import argparse
+    _use_utf8_output()
     ap = argparse.ArgumentParser(
         description="המרת קובץ Word (.docx) לטקסט עם תגיות עיצוב (עורך מנחם)")
     ap.add_argument("files", nargs="+", help="קבצי .docx להמרה")
