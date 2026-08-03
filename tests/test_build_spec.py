@@ -436,6 +436,25 @@ def test_an_untrusted_certificate_chain_warns_instead_of_failing(workflows):
     assert "verify /pa" not in sign
 
 
+def test_an_expired_certificate_fails_with_a_clear_message(workflows):
+    """signtool מדווח על תעודה פגה בהודעה סתומה; הזרימה מסבירה במקומו."""
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "NotAfter" in sign
+    assert "NotBefore" in sign
+    assert "פגה" in sign
+
+
+def test_a_certificate_about_to_expire_is_flagged_early(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "AddDays(30)" in sign
+
+
+def test_the_password_is_optional_because_a_pfx_may_have_none(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert 'if ($env:SIGNING_CERT_PASSWORD) {' in sign
+    assert '$arguments += @("/p", $env:SIGNING_CERT_PASSWORD)' in sign
+
+
 def test_the_private_key_is_always_deleted_from_the_runner(workflows):
     sign = release_steps(workflows)["Sign the EXE"]["run"]
     assert "finally" in sign

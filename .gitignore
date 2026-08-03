@@ -14,3 +14,4 @@ dist/
 *.pfx
 *.p12
 *.key
+base64 של קובץ ה-pfx.txt

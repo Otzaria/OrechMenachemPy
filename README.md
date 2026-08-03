@@ -80,14 +80,22 @@ Pull Request. הוא אינו בונה EXE ואינו נוגע ב-Releases.
 וחתימת זמן. בלעדיהם הבנייה מצליחה ורושמת אזהרה שהקובץ לא נחתם.
 
 **קובץ ה-pfx לא נכנס למאגר** — הוא מכיל מפתח פרטי, ומי שמשיג אותו יכול
-לחתום בשמכם על כל קובץ. `.gitignore` חוסם `*.pfx`/`*.p12`/`*.key`. להעלאת
-התעודה כסוד:
+לחתום בשמכם על כל קובץ. `.gitignore` חוסם `*.pfx`/`*.p12`/`*.key`.
 
-```
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.pfx")) | Set-Clipboard
+להעלאת התעודה כסוד, מריצים ב-PowerShell מתיקיית הפרויקט:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.pfx")) |
+    Set-Clipboard
 ```
 
-ואת התוצאה מדביקים ב-Settings → Secrets and variables → Actions.
+ואז נכנסים ל-**Settings → Secrets and variables → Actions → New repository
+secret**, שם `SIGNING_CERT_BASE64`, ומדביקים. אם ל-pfx יש סיסמה, מוסיפים
+סוד שני בשם `SIGNING_CERT_PASSWORD`; אם אין לו סיסמה — פשוט לא יוצרים אותו.
+
+הזרימה בודקת את תוקף התעודה לפני החתימה ונכשלת בהודעה מובנת אם היא פגה
+(`signtool` עצמו מדווח רק "No certificates were found that met all the given
+criteria"), ומזהירה אם נותרו לה פחות מ-30 יום.
 
 שימו לב: תעודה עצמית (self-signed) נחתמת בהצלחה אך אינה נאמנת באף מחשב,
 ולכן ווינדוס ימשיך להציג אזהרת SmartScreen. רק תעודת OV/EV מרשות מוכרת

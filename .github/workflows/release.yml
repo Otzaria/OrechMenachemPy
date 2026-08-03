@@ -122,6 +122,27 @@ jobs:
             [IO.File]::WriteAllBytes(
               $pfx, [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
 
+            # signtool מסרב לחתום בתעודה שפג תוקפה ומדווח רק
+            # "No certificates were found that met all the given criteria",
+            # שאינו מרמז על הסיבה. הבדיקה כאן הופכת זאת להודעה מובנת.
+            $loaded = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              $pfx, $env:SIGNING_CERT_PASSWORD)
+            $now = Get-Date
+            Write-Host "Certificate: $($loaded.Subject)"
+            Write-Host "Valid: $($loaded.NotBefore) .. $($loaded.NotAfter)"
+            if ($loaded.NotAfter -lt $now) {
+              throw ("תעודת החתימה פגה ב-$($loaded.NotAfter). signtool " +
+                "יסרב לחתום בה — יש לחדש את התעודה ולעדכן את הסוד " +
+                "SIGNING_CERT_BASE64.")
+            }
+            if ($loaded.NotBefore -gt $now) {
+              throw "תעודת החתימה נכנסת לתוקף רק ב-$($loaded.NotBefore)."
+            }
+            if ($loaded.NotAfter -lt $now.AddDays(30)) {
+              Write-Host ("::warning::תעודת החתימה פגה ב-$($loaded.NotAfter) — " +
+                "בעוד פחות מ-30 יום.")
+            }
+
             $arguments = @("sign", "/f", $pfx)
             if ($env:SIGNING_CERT_PASSWORD) {
               $arguments += @("/p", $env:SIGNING_CERT_PASSWORD)
