@@ -165,7 +165,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.worker = None
-        self.setWindowTitle("עורך מנחם — המרה לטקסט עם תגיות")
+        self.setWindowTitle("עורך מנחם — המרת וורד לטקסט בפורמט אוצריא")
         self.setLayoutDirection(Qt.RightToLeft)
         self.resize(835, 670)
         self._build_ui()
