@@ -184,7 +184,7 @@ def build_stylesheet():
         color: {disabled_text};
     }}
 
-    /* ── שדות מספר — רדיוס קטן כמו כפתורים (מתאים לחיצי עלייה/ירידה) ────── */
+    /* ── שדות מספר ───────────────────────────────────────────────────── */
     QDoubleSpinBox, QSpinBox {{
         background-color: {hover_on_surface};
         color: {on_surface};
@@ -201,11 +201,6 @@ def build_stylesheet():
         background-color: {disabled_container};
         color: {disabled_text};
     }}
-    /* אין עיצוב ל-::up-button/::down-button בכוונה: Qt מפסיק לצייר את חיצי
-       העלייה/הירידה הילידיים ברגע שיש עיצוב QSS כלשהו על התת-רכיבים האלה,
-       ואין להם תחליף מובנה בלי לספק אייקון מותאם אישית — לכן נשארים עם
-       הציור הילידי המלא של Fusion. */
-
     /* ── תיבות סימון ──────────────────────────────────────────────────── */
     QCheckBox {{
         background-color: transparent;
@@ -238,7 +233,8 @@ def build_stylesheet():
     }}
     QListWidget::item, QTreeWidget::item {{
         border-radius: {radius}px;
-        padding: 5px 8px;
+        /* מאפשר לבקר הגודל (40px) ולשם הקובץ להיות ממורכזים באותה שורה. */
+        padding: 1px 8px;
         margin: 1px 0;
     }}
     QListWidget::item:hover, QTreeWidget::item:hover {{
@@ -262,15 +258,20 @@ def build_stylesheet():
         font-weight: 600;
     }}
 
-    /* תיבות הגודל המשובצות בשורות הטבלה — קומפקטיות, ללא רקע כרטיס */
+    /* בקרי גודל בשורות הטבלה: שדה מספר ושני כפתורי +/- גדולים.
+       לא משתמשים בתת-הרכיבים הילידיים של QDoubleSpinBox, כי QSS עליהם
+       מעלים את חיצי Fusion. */
+    QWidget#sizeControl {{
+        background-color: transparent;
+    }}
     QDoubleSpinBox#rowSpin {{
         background-color: {surface};
         border: 1px solid {outline_variant};
         border-radius: 6px;
-        padding: 0px 2px;
-        min-height: 24px;
-        max-height: 26px;
-        margin: 2px 4px;
+        /* תיקון אופטי: גופני Qt מציגים ספרות מעט נמוך ממרכז הריבוע. */
+        padding: 0px 2px 4px 2px;
+        /* 30px תוכן + 4px תיקון אופטי + גבולות = גובה חיצוני של 36px. */
+        min-height: 30px;
     }}
     QDoubleSpinBox#rowSpin:hover {{
         border-color: {primary};
@@ -278,6 +279,34 @@ def build_stylesheet():
     QDoubleSpinBox#rowSpin:focus {{
         background-color: {pressed_on_surface};
         border: 1.5px solid {primary};
+    }}
+    QPushButton#sizeStepButton {{
+        background-color: {surface_container_high};
+        color: {on_primary_container};
+        border: 1px solid {outline_variant};
+        border-radius: 8px;
+        /* תיקון אופטי: סימני +/− ממורכזים ביחס לריבוע הכפתור. */
+        padding: 0px 0px 4px 0px;
+        min-width: 34px;
+        /* 30px תוכן + 4px תיקון אופטי + גבולות = גובה חיצוני של 36px. */
+        min-height: 30px;
+        font-size: 16pt;
+        font-weight: 600;
+    }}
+    QPushButton#sizeStepButton:hover {{
+        background-color: {primary_container};
+        border-color: {primary};
+    }}
+    QPushButton#sizeStepButton:pressed {{
+        background-color: {pressed_on_surface};
+    }}
+    QPushButton#sizeStepButton:focus {{
+        border: 2px solid {primary};
+    }}
+    QPushButton#sizeStepButton:disabled {{
+        background-color: {disabled_container};
+        color: {disabled_text};
+        border-color: {disabled_container};
     }}
 
     /* ── יומן פעולות ──────────────────────────────────────────────────── */
@@ -365,6 +394,7 @@ def build_stylesheet():
         outline_variant=OUTLINE_VARIANT,
         primary=PRIMARY,
         on_primary=ON_PRIMARY,
+        primary_container=PRIMARY_CONTAINER,
         on_primary_container=ON_PRIMARY_CONTAINER,
         hover_on_surface=HOVER_ON_SURFACE,
         pressed_on_surface=PRESSED_ON_SURFACE,

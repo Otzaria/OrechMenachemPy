@@ -20,7 +20,7 @@ app.py — ממשק גרפי (PyQt5) ל"עורך מנחם" — המרת קובצ
 import os
 import sys
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -83,16 +83,91 @@ class Worker(QThread):
         self.finished_all.emit(ok, fail)
 
 
+class SizeControl(QWidget):
+    """בקר גודל עם שדה עריכה ושני כפתורי צעד גדולים ונגישים."""
+
+    BUTTON_SIZE = 36
+
+    def __init__(self, low, high, value, parent=None):
+        super().__init__(parent)
+        self.setObjectName("sizeControl")
+        # מספרים וכפתורי +/- נקראים בצורה טבעית משמאל לימין, גם בממשק RTL.
+        self.setLayoutDirection(Qt.LeftToRight)
+        self.setFixedHeight(40)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+
+        self.btn_decrease = QPushButton("−")
+        self.btn_decrease.setObjectName("sizeStepButton")
+        self.btn_decrease.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
+        self.btn_decrease.setToolTip("הקטנת הגודל בחצי נקודה")
+        self.btn_decrease.setAccessibleName("הקטנת גודל")
+        self.btn_decrease.setAccessibleDescription("מקטין את הגודל בחצי נקודה")
+        self.btn_decrease.setAutoRepeat(True)
+        self.btn_decrease.setAutoRepeatDelay(350)
+        self.btn_decrease.setAutoRepeatInterval(80)
+
+        self.spin = QDoubleSpinBox()
+        self.spin.setObjectName("rowSpin")
+        self.spin.setRange(low, high)
+        self.spin.setSingleStep(0.5)
+        self.spin.setDecimals(1)
+        self.spin.setValue(value)
+        self.spin.setAlignment(Qt.AlignCenter)
+        self.spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        self.spin.setFixedHeight(self.BUTTON_SIZE)
+        self.spin.setMinimumWidth(56)
+        self.spin.setAccessibleName("גודל בנקודות")
+        self.spin.setAccessibleDescription(
+            "אפשר להקליד ערך, או להשתמש במקשי החץ למעלה ולמטה")
+
+        self.btn_increase = QPushButton("+")
+        self.btn_increase.setObjectName("sizeStepButton")
+        self.btn_increase.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
+        self.btn_increase.setToolTip("הגדלת הגודל בחצי נקודה")
+        self.btn_increase.setAccessibleName("הגדלת גודל")
+        self.btn_increase.setAccessibleDescription("מגדיל את הגודל בחצי נקודה")
+        self.btn_increase.setAutoRepeat(True)
+        self.btn_increase.setAutoRepeatDelay(350)
+        self.btn_increase.setAutoRepeatInterval(80)
+
+        self.btn_decrease.clicked.connect(lambda: self.spin.stepDown())
+        self.btn_increase.clicked.connect(lambda: self.spin.stepUp())
+        self.spin.valueChanged.connect(self._sync_step_buttons)
+        layout.addWidget(self.btn_decrease)
+        layout.addWidget(self.spin, 1)
+        layout.addWidget(self.btn_increase)
+        self._sync_step_buttons()
+
+    def _sync_step_buttons(self):
+        """מונע פעולות שאין להן תוצאה כשמגיעים לקצות הטווח."""
+        self.btn_decrease.setEnabled(self.spin.value() > self.spin.minimum())
+        self.btn_increase.setEnabled(self.spin.value() < self.spin.maximum())
+
+    def value(self):
+        """שומר על אותו ממשק ציבורי של QDoubleSpinBox עבור הקוד הקיים."""
+        return self.spin.value()
+
+    def setValue(self, value):
+        """שומר על אותו ממשק ציבורי של QDoubleSpinBox עבור הקוד הקיים."""
+        self.spin.setValue(value)
+
+    def sizeHint(self):
+        return QSize(152, 40)
+
+
 class MainWindow(QWidget):
     # רוחב עמודות הגדלים בטבלת הקבצים
-    SIZE_COL_WIDTH = 104
+    SIZE_COL_WIDTH = 160
 
     def __init__(self):
         super().__init__()
         self.worker = None
         self.setWindowTitle("עורך מנחם — המרה לטקסט עם תגיות")
         self.setLayoutDirection(Qt.RightToLeft)
-        self.resize(860, 660)
+        self.resize(835, 670)
         self._build_ui()
 
     @staticmethod
@@ -105,16 +180,8 @@ class MainWindow(QWidget):
 
     @staticmethod
     def _row_spin(low, high, value):
-        """תיבת גודל קומפקטית לשיבוץ בתוך שורה בטבלת הקבצים."""
-        spin = QDoubleSpinBox()
-        spin.setObjectName("rowSpin")
-        spin.setRange(low, high)
-        spin.setSingleStep(0.5)
-        spin.setDecimals(1)
-        spin.setValue(value)
-        spin.setAlignment(Qt.AlignCenter)
-        spin.setButtonSymbols(QDoubleSpinBox.UpDownArrows)
-        return spin
+        """בקר גודל מעוצב לשיבוץ בתוך שורה בטבלת הקבצים."""
+        return SizeControl(low, high, value)
 
     def _add_file_row(self, path, normal_pt, notes_pt):
         """מוסיף שורת קובץ עם שתי תיבות גודל משלה."""
@@ -122,7 +189,13 @@ class MainWindow(QWidget):
         item.setData(0, Qt.UserRole, path)
         item.setToolTip(0, path)
         self.file_tree.addTopLevelItem(item)
-        # setItemWidget מחזיק בבעלות על הווידג'טים — אין צורך במיפוי נפרד
+        # setItemWidget מחזיק בבעלות על הווידג'טים — אין צורך במיפוי נפרד.
+        # גובה מפורש מונע מהטבלה לדחוס את אזורי הלחיצה של כפתורי +/-.
+        # הוא גם ממרכז את הבקר מול שם הקובץ באותה שורה.
+        row_height = 44
+        item.setSizeHint(0, QSize(1, row_height))
+        item.setSizeHint(1, QSize(self.SIZE_COL_WIDTH, row_height))
+        item.setSizeHint(2, QSize(self.SIZE_COL_WIDTH, row_height))
         self.file_tree.setItemWidget(item, 1, self._row_spin(3.0, 72.0, normal_pt))
         self.file_tree.setItemWidget(item, 2, self._row_spin(0.0, 72.0, notes_pt))
         return item
@@ -142,7 +215,8 @@ class MainWindow(QWidget):
         self.file_tree.setColumnCount(3)
         self.file_tree.setHeaderLabels(["שם הקובץ", "גודל טקסט", "גודל הערות"])
         self.file_tree.setRootIsDecorated(False)   # אין חצי הרחבה — זו טבלה שטוחה
-        self.file_tree.setUniformRowHeights(True)
+        # נדרש כדי ש-QTreeWidget יכבד את גובה השורה שנקבע לכל פריט.
+        self.file_tree.setUniformRowHeights(False)
         self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         hdr = self.file_tree.header()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -151,7 +225,7 @@ class MainWindow(QWidget):
         hdr.setStretchLastSection(False)
         self.file_tree.setColumnWidth(1, self.SIZE_COL_WIDTH)
         self.file_tree.setColumnWidth(2, self.SIZE_COL_WIDTH)
-        self.file_tree.setMinimumHeight(160)
+        self.file_tree.setMinimumHeight(180)
         fb.addWidget(self.file_tree)
 
         btn_row = QHBoxLayout()
@@ -160,12 +234,16 @@ class MainWindow(QWidget):
         self.btn_remove = QPushButton("הסרת נבחרים")
         self.btn_remove.clicked.connect(self.remove_selected)
         self.btn_clear = QPushButton("ניקוי הרשימה")
-        self.btn_clear.clicked.connect(self.file_tree.clear)
+        self.btn_clear.clicked.connect(self.clear_files)
 
         self.btn_suggest = QPushButton("זהה גדלים באופן אוטומטי לכל הקבצים")
         self.btn_suggest.setToolTip(
             "סורק כל קובץ ברשימה בנפרד וממלא בשורה שלו את הגדלים שזוהו בו")
         self.btn_suggest.clicked.connect(self.suggest_sizes)
+        self.file_tree.itemSelectionChanged.connect(self._update_file_actions)
+        self._update_file_actions()
+
+        btn_row = QHBoxLayout()
 
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_remove)
@@ -173,6 +251,7 @@ class MainWindow(QWidget):
         btn_row.addWidget(self.btn_suggest)
         btn_row.addStretch(1)
         fb.addLayout(btn_row)
+        # הכפתור הארוך בשורה משלו: כך החלון יכול להישאר צר בלי לקצר את הטקסט.
         # טבלת הקבצים היא לב המסך — היא מקבלת את רוב המקום הפנוי, והיומן מעט
         root.addWidget(files_box, 3)
 
@@ -192,7 +271,7 @@ class MainWindow(QWidget):
         self.spin_normal.setRange(3.0, 72.0)
         self.spin_normal.setSingleStep(0.5)
         self.spin_normal.setDecimals(1)
-        self.spin_normal.setValue(12.0)
+        self.spin_normal.setValue(11.0)
         self.spin_normal.hide()  # מסתיר את תיבת הסימון
         grid.addWidget(self.spin_normal, 1, 1)
 
@@ -251,7 +330,7 @@ class MainWindow(QWidget):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(QFont("Consolas", 10))
-        self.log.setMinimumHeight(190)
+        self.log.setMinimumHeight(230)
         root.addWidget(self.log, 1)
 
     # ------------------------------------------------------------------ פעולות
@@ -268,12 +347,26 @@ class MainWindow(QWidget):
             if p in existing:
                 continue
             self._add_file_row(p, default_normal, default_notes)
+        self._update_file_actions()
 
     def remove_selected(self):
         for item in self.file_tree.selectedItems():
             idx = self.file_tree.indexOfTopLevelItem(item)
             if idx >= 0:
                 self.file_tree.takeTopLevelItem(idx)
+        self._update_file_actions()
+
+    def clear_files(self):
+        """מנקה את הרשימה ומרענן את מצבי כפתורי הפעולה שלה."""
+        self.file_tree.clear()
+        self._update_file_actions()
+
+    def _update_file_actions(self):
+        """פעולות רשימה זמינות רק כשיש להן יעד."""
+        has_files = self.file_tree.topLevelItemCount() > 0
+        self.btn_remove.setEnabled(bool(self.file_tree.selectedItems()))
+        self.btn_clear.setEnabled(has_files)
+        self.btn_suggest.setEnabled(has_files)
 
     def pick_out_dir(self):
         d = QFileDialog.getExistingDirectory(self, "בחירת תיקיית פלט")
