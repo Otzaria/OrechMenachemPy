@@ -40,6 +40,14 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## בניית EXE נייד ב-GitHub
+
+הקובץ `.github/workflows/build-exe.yml` מאפשר לבנות EXE בודד ונייד של
+Windows ללא התקנת Python אצל המשתמש. ב-GitHub נכנסים ללשונית **Actions**,
+בוחרים **Build portable Windows EXE**, ולוחצים **Run workflow**. בסיום
+ההרצה מורידים את `OrechMenachem-Windows-portable` מאזור **Artifacts**;
+בתוכו נמצא `OrechMenachem.exe`.
+
 בממשק:
 1. **בחירת קבצים…** — בוחרים קובץ אחד או כמה קובצי ‎.docx.
 2. מגדירים **גודל טקסט רגיל** ו**גודל הערות רגיל** (אפשר ללחוץ **"זהה גדלים מהקובץ הראשון"** לזיהוי אוטומטי).

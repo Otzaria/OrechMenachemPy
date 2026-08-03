@@ -1,1 +1,6 @@
 __pycache__/
+
+# תוצרי בנייה מקומיים של PyInstaller
+build/
+dist/
+*.spec
