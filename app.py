@@ -151,7 +151,7 @@ class MainWindow(QWidget):
         hdr.setStretchLastSection(False)
         self.file_tree.setColumnWidth(1, self.SIZE_COL_WIDTH)
         self.file_tree.setColumnWidth(2, self.SIZE_COL_WIDTH)
-        self.file_tree.setMinimumHeight(190)
+        self.file_tree.setMinimumHeight(160)
         fb.addWidget(self.file_tree)
 
         btn_row = QHBoxLayout()
@@ -161,9 +161,16 @@ class MainWindow(QWidget):
         self.btn_remove.clicked.connect(self.remove_selected)
         self.btn_clear = QPushButton("ניקוי הרשימה")
         self.btn_clear.clicked.connect(self.file_tree.clear)
+
+        self.btn_suggest = QPushButton("זהה גדלים באופן אוטומטי לכל הקבצים")
+        self.btn_suggest.setToolTip(
+            "סורק כל קובץ ברשימה בנפרד וממלא בשורה שלו את הגדלים שזוהו בו")
+        self.btn_suggest.clicked.connect(self.suggest_sizes)
+
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_remove)
         btn_row.addWidget(self.btn_clear)
+        btn_row.addWidget(self.btn_suggest)
         btn_row.addStretch(1)
         fb.addLayout(btn_row)
         # טבלת הקבצים היא לב המסך — היא מקבלת את רוב המקום הפנוי, והיומן מעט
@@ -177,31 +184,28 @@ class MainWindow(QWidget):
         # אחרי ההוספה כל שורה בטבלה ניתנת לשינוי בנפרד.
         lbl_defaults = QLabel("ברירת מחדל לקבצים חדשים:")
         lbl_defaults.setObjectName("sectionHint")
+        lbl_defaults.hide()  # מסתיר את תיבת הסימון
         grid.addWidget(lbl_defaults, 0, 0, 1, 5)
 
-        grid.addWidget(QLabel("גודל טקסט רגיל:"), 1, 0)
+        # grid.addWidget(QLabel("גודל טקסט רגיל:"), 1, 0)
         self.spin_normal = QDoubleSpinBox()
         self.spin_normal.setRange(3.0, 72.0)
         self.spin_normal.setSingleStep(0.5)
         self.spin_normal.setDecimals(1)
         self.spin_normal.setValue(12.0)
+        self.spin_normal.hide()  # מסתיר את תיבת הסימון
         grid.addWidget(self.spin_normal, 1, 1)
 
-        grid.addWidget(QLabel("גודל הערות רגיל:"), 1, 2)
+        # grid.addWidget(QLabel("גודל הערות רגיל:"), 1, 2)
         self.spin_notes = QDoubleSpinBox()
         self.spin_notes.setRange(0.0, 72.0)
         self.spin_notes.setSingleStep(0.5)
         self.spin_notes.setDecimals(1)
         self.spin_notes.setValue(10.0)
+        self.spin_notes.hide()  # מסתיר את תיבת הסימון
         grid.addWidget(self.spin_notes, 1, 3)
 
-        self.btn_suggest = QPushButton("זהה גדלים באופן אוטומטי לכל הקבצים")
-        self.btn_suggest.setToolTip(
-            "סורק כל קובץ ברשימה בנפרד וממלא בשורה שלו את הגדלים שזוהו בו")
-        self.btn_suggest.clicked.connect(self.suggest_sizes)
-        grid.addWidget(self.btn_suggest, 1, 4)
-
-        grid.addWidget(self._divider(), 2, 0, 1, 5)
+        # grid.addWidget(self._divider(), 2, 0, 1, 5)
 
         grid.addWidget(QLabel("תיקיית פלט:"), 3, 0)
         self.edit_out = QLineEdit()
@@ -247,7 +251,7 @@ class MainWindow(QWidget):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(QFont("Consolas", 10))
-        self.log.setMinimumHeight(90)
+        self.log.setMinimumHeight(190)
         root.addWidget(self.log, 1)
 
     # ------------------------------------------------------------------ פעולות
