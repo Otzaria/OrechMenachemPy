@@ -15,6 +15,11 @@ jobs:
   release:
     name: Build and publish portable EXE
     runs-on: windows-latest
+    env:
+      # הסודות ממופים לסביבת המשרה כי הקשר secrets אינו זמין ב-if של שלב,
+      # וכך אפשר לדלג על החתימה בנקיון כשהתעודה לא הוגדרה עדיין.
+      SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+      SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
 
     steps:
       - name: Check out source
@@ -27,6 +32,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      # מספר הגרסה שמוזן כאן הוא מקור האמת היחיד: ממנו נגזרים שם הקובץ,
+      # תגית ה-Release ומידע הגרסה שבמאפייני ה-EXE בווינדוס.
       - name: Validate release version
         shell: pwsh
         env:
@@ -39,7 +46,13 @@ jobs:
           if (-not $version.StartsWith("v")) {
             $version = "v$version"
           }
-          "RELEASE_TAG=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $exeName = "OrechMenachem_$version"
+          @(
+            "RELEASE_TAG=$version"
+            "OM_EXE_NAME=$exeName"
+            "EXE_PATH=dist\$exeName.exe"
+          ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Building $exeName.exe for release $version"
 
       - name: Install build dependencies
         run: |
@@ -47,32 +60,116 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install "pyinstaller>=6,<7"
 
+      # מסנכרן את version_info.txt עם הגרסה שהוזנה, כדי שלא תהיה סתירה בין
+      # שם הקובץ למאפייני הקובץ. התבנית שבמאגר אינה משתנה.
+      - name: Stamp Windows version info
+        shell: pwsh
+        run: |
+          python stamp_version.py `
+            --version "$env:RELEASE_TAG" `
+            --output "build\version_info.generated.txt" `
+            --exe-name "$env:OM_EXE_NAME.exe"
+
       # הבנייה מוגדרת ב-OrechMenachem.spec, שמשאיר בחבילה רק את חלקי Qt
       # ו-lxml שהאפליקציה באמת טוענת. אין להוסיף כאן --collect-all: הוא
       # גורר את כל Qt (כולל WebEngine) ומשלש את גודל הקובץ.
+      # OM_EXE_NAME נקבע בשלב האימות; OM_ICON אינו נדרש — ה-spec לוקח את
+      # assets/icon.ico מעצמו ברגע שהקובץ יתווסף למאגר.
       - name: Build single-file portable EXE
+        env:
+          OM_VERSION_FILE: build\version_info.generated.txt
         run: python -m PyInstaller --noconfirm --clean OrechMenachem.spec
 
       - name: Verify build output
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist\OrechMenachem.exe")) {
-            throw "The EXE was not created."
+          if (-not (Test-Path $env:EXE_PATH)) {
+            throw "The EXE was not created at $env:EXE_PATH."
           }
-          $exe = Get-Item "dist\OrechMenachem.exe"
+          $exe = Get-Item $env:EXE_PATH
           $mb = [math]::Round($exe.Length / 1MB, 1)
-          Write-Host "OrechMenachem.exe: $mb MB"
+          $info = $exe.VersionInfo
+          Write-Host "$($exe.Name): $mb MB"
+          Write-Host "FileVersion=$($info.FileVersion) ProductVersion=$($info.ProductVersion)"
           # שומר מפני נסיגה שמחזירה את כל Qt לחבילה.
           if ($mb -gt 30) {
             throw "The EXE grew to $mb MB; expected about 18 MB. Check OrechMenachem.spec."
           }
-          "### EXE size: $mb MB" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          # מאמת שמידע הגרסה נכנס בפועל ותואם את התגית.
+          $expected = ($env:RELEASE_TAG).TrimStart("v").Split("-")[0]
+          if (-not $info.FileVersion.StartsWith($expected)) {
+            throw "FileVersion '$($info.FileVersion)' does not match the tag '$env:RELEASE_TAG'."
+          }
+          "### $($exe.Name) — $mb MB, version $($info.FileVersion)" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      # החתימה רצה רק אם הוגדרו הסודות. התעודה אינה נשמרת במאגר: מעלים
+      # אותה כסוד SIGNING_CERT_BASE64 (base64 של קובץ ה-pfx) ואת הסיסמה
+      # כסוד SIGNING_CERT_PASSWORD. קובץ pfx מכיל מפתח פרטי, ומי שמשיג
+      # אותו יכול לחתום בשמכם על כל קובץ.
+      - name: Sign the EXE
+        if: env.SIGNING_CERT_BASE64 != ''
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem `
+            "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" `
+            -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found on the runner." }
+
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes(
+              $pfx, [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
+
+            $arguments = @("sign", "/f", $pfx)
+            if ($env:SIGNING_CERT_PASSWORD) {
+              $arguments += @("/p", $env:SIGNING_CERT_PASSWORD)
+            }
+            $arguments += @(
+              "/fd", "SHA256", "/td", "SHA256",
+              "/tr", "http://timestamp.digicert.com",
+              "/a", "/v", $env:EXE_PATH
+            )
+            & $signtool.FullName @arguments
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed ($LASTEXITCODE)." }
+          }
+          finally {
+            # המפתח הפרטי לא נשאר על הדיסק של הרנר גם אם החתימה נכשלה.
+            if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+          # החתימה חייבת להיות שם, אבל אמינות שרשרת התעודות אינה תנאי:
+          # תעודה עצמית (self-signed) נחתמת בהצלחה ובכל זאת אינה נאמנת
+          # באף מחשב, ולכן אימות מלא היה מפיל כל Release שנחתם בה.
+          $signature = Get-AuthenticodeSignature $env:EXE_PATH
+          if ($signature.Status -eq "NotSigned") {
+            throw "The EXE came out unsigned even though signtool reported success."
+          }
+          $timestamped = if ($signature.TimeStamperCertificate) { "כן" } else { "לא" }
+          Write-Host "Status=$($signature.Status) Timestamped=$timestamped"
+          Write-Host "Signer=$($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne "Valid") {
+            Write-Host ("::warning::החתימה נוספה אך שרשרת התעודות אינה נאמנת " +
+              "($($signature.Status)). כך מתנהגת תעודה עצמית — ווינדוס ימשיך " +
+              "להציג אזהרת SmartScreen. תעודת OV/EV מרשות מוכרת פותרת זאת.")
+          }
+          "### נחתם דיגיטלית — $($signature.Status), חתימת זמן: $timestamped" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Report that signing was skipped
+        if: env.SIGNING_CERT_BASE64 == ''
+        shell: pwsh
+        run: |
+          $note = "ה-EXE לא נחתם: לא הוגדר הסוד SIGNING_CERT_BASE64."
+          Write-Host "::warning::$note"
+          "### $note" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: OrechMenachem-Windows-portable
-          path: dist/OrechMenachem.exe
+          path: dist/OrechMenachem_v*.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -81,7 +178,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create $env:RELEASE_TAG dist\OrechMenachem.exe
+          gh release create $env:RELEASE_TAG $env:EXE_PATH
           --repo "${{ github.repository }}"
           --title "עורך מנחם $env:RELEASE_TAG"
           --generate-notes

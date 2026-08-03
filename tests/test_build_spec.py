@@ -32,8 +32,7 @@ class _FakeAnalysis:
         self.scripts = []
 
 
-@pytest.fixture(scope="module")
-def spec():
+def load_spec():
     """מריץ את המרשם עם תחליפים ל-API של PyInstaller ומחזיר את המרחב שלו."""
     calls = {}
 
@@ -50,9 +49,20 @@ def spec():
     }
     with open(SPEC_PATH, encoding="utf-8") as fh:
         source = fh.read()
-    exec(compile(source, SPEC_PATH, "exec"), namespace)
+    # המרשם פותר נתיבים יחסית לשורש המאגר, כמו PyInstaller עצמו.
+    previous = os.getcwd()
+    os.chdir(PROJECT_ROOT)
+    try:
+        exec(compile(source, SPEC_PATH, "exec"), namespace)
+    finally:
+        os.chdir(previous)
     namespace["_calls"] = calls
     return namespace
+
+
+@pytest.fixture(scope="module")
+def spec():
+    return load_spec()
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +105,60 @@ def test_the_spec_builds_a_windowed_single_file_executable(spec):
     assert exe["name"] == "OrechMenachem"
     assert exe["console"] is False
     assert exe["debug"] is False
+
+
+# ---------------------------------------------------- שם, אייקון ומידע גרסה
+def test_the_exe_name_can_be_set_from_the_environment(monkeypatch):
+    monkeypatch.setenv("OM_EXE_NAME", "OrechMenachem_v9.9.9")
+    assert load_spec()["_calls"]["exe"]["name"] == "OrechMenachem_v9.9.9"
+
+
+def test_an_empty_name_variable_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("OM_EXE_NAME", "")
+    assert load_spec()["_calls"]["exe"]["name"] == "OrechMenachem"
+
+
+def test_the_version_file_is_passed_through_when_it_exists(monkeypatch, tmp_path):
+    version_file = tmp_path / "version_info.generated.txt"
+    version_file.write_text("VSVersionInfo()", encoding="utf-8")
+    monkeypatch.setenv("OM_VERSION_FILE", str(version_file))
+    assert load_spec()["_calls"]["exe"]["version"] == str(version_file)
+
+
+def test_no_version_file_is_used_by_default(monkeypatch):
+    monkeypatch.delenv("OM_VERSION_FILE", raising=False)
+    assert load_spec()["_calls"]["exe"]["version"] is None
+
+
+def test_a_missing_version_file_stops_the_build(monkeypatch, tmp_path):
+    """שגיאה שקטה כאן הייתה מפיקה EXE בלי מספר גרסה בלי שאיש ישים לב."""
+    monkeypatch.setenv("OM_VERSION_FILE", str(tmp_path / "absent.txt"))
+    with pytest.raises(SystemExit, match="OM_VERSION_FILE"):
+        load_spec()
+
+
+def test_the_icon_is_used_once_the_file_exists(monkeypatch, tmp_path):
+    icon = tmp_path / "icon.ico"
+    icon.write_bytes(b"\x00\x00\x01\x00")
+    monkeypatch.setenv("OM_ICON", str(icon))
+    assert load_spec()["_calls"]["exe"]["icon"] == str(icon)
+
+
+def test_a_missing_icon_does_not_break_the_build(monkeypatch, tmp_path):
+    monkeypatch.setenv("OM_ICON", str(tmp_path / "absent.ico"))
+    assert load_spec()["_calls"]["exe"]["icon"] is None
+
+
+def test_the_default_icon_location_is_the_assets_folder(spec):
+    assert spec["DEFAULT_ICON"] == os.path.join("assets", "icon.ico")
+
+
+def test_the_icon_matches_whether_the_assets_file_is_present(monkeypatch, spec):
+    """כשיתווסף assets/icon.ico הוא ייכנס לבנייה מעצמו, בלי לשנות קוד."""
+    monkeypatch.delenv("OM_ICON", raising=False)
+    present = os.path.isfile(os.path.join(PROJECT_ROOT, spec["DEFAULT_ICON"]))
+    icon = load_spec()["_calls"]["exe"]["icon"]
+    assert (icon is not None) == present
 
 
 def test_the_spec_analyses_the_gui_entry_point(spec):
@@ -279,3 +343,142 @@ def test_the_release_workflow_guards_against_the_exe_growing_back(workflows):
     verify = next(s for s in steps if s["name"] == "Verify build output")
     assert "throw" in verify["run"]
     assert "1MB" in verify["run"]
+
+
+# -------------------------------------------- שם עם גרסה, מידע גרסה וחתימה
+def release_steps(workflows):
+    return {step["name"]: step
+            for step in workflows["release.yml"]["jobs"]["release"]["steps"]}
+
+
+def test_the_exe_name_carries_the_release_version(workflows):
+    validate = release_steps(workflows)["Validate release version"]["run"]
+    assert 'OrechMenachem_$version' in validate
+    assert "OM_EXE_NAME=$exeName" in validate
+    assert "EXE_PATH=dist\\$exeName.exe" in validate
+
+
+def test_the_release_tag_and_the_file_name_come_from_one_input(workflows):
+    validate = release_steps(workflows)["Validate release version"]["run"]
+    # שני הערכים נגזרים מאותו $version, ולכן אינם יכולים להתפצל.
+    assert "RELEASE_TAG=$version" in validate
+    assert validate.count("$exeName = ") == 1
+
+
+def test_the_version_info_is_stamped_before_the_build(workflows):
+    steps = [s["name"] for s in
+             workflows["release.yml"]["jobs"]["release"]["steps"]]
+    assert steps.index("Stamp Windows version info") < \
+        steps.index("Build single-file portable EXE")
+
+
+def test_the_stamped_version_info_is_generated_from_the_tag(workflows):
+    stamp = release_steps(workflows)["Stamp Windows version info"]["run"]
+    assert "stamp_version.py" in stamp
+    assert "$env:RELEASE_TAG" in stamp
+    assert "$env:OM_EXE_NAME.exe" in stamp
+
+
+def test_the_build_receives_the_generated_version_file(workflows):
+    build = release_steps(workflows)["Build single-file portable EXE"]
+    assert build["env"]["OM_VERSION_FILE"] == "build\\version_info.generated.txt"
+
+
+def test_the_build_never_overwrites_the_version_info_template(workflows):
+    """התבנית שבמאגר היא קלט; הפלט נכתב תחת build/."""
+    commands = " ".join(
+        step.get("run", "")
+        for step in workflows["release.yml"]["jobs"]["release"]["steps"])
+    assert "--output \"build\\version_info.generated.txt\"" in commands \
+        or "--output `\n            \"build" in commands \
+        or "build\\version_info.generated.txt" in commands
+    assert "--output version_info.txt" not in commands
+
+
+def test_the_verify_step_checks_the_version_actually_landed(workflows):
+    verify = release_steps(workflows)["Verify build output"]["run"]
+    assert "FileVersion" in verify
+    assert "RELEASE_TAG" in verify
+
+
+def test_signing_runs_only_when_the_certificate_secret_is_configured(workflows):
+    job = workflows["release.yml"]["jobs"]["release"]
+    assert job["env"]["SIGNING_CERT_BASE64"] == \
+        "${{ secrets.SIGNING_CERT_BASE64 }}"
+    sign = release_steps(workflows)["Sign the EXE"]
+    # הקשר secrets אינו זמין ב-if של שלב, ולכן הבדיקה היא על env.
+    assert sign["if"] == "env.SIGNING_CERT_BASE64 != ''"
+
+
+def test_a_skipped_signature_is_announced(workflows):
+    skip = release_steps(workflows)["Report that signing was skipped"]
+    assert skip["if"] == "env.SIGNING_CERT_BASE64 == ''"
+    assert "::warning::" in skip["run"]
+
+
+def test_signing_uses_sha256_and_a_timestamp_server(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert '"/fd", "SHA256"' in sign
+    assert '"/td", "SHA256"' in sign
+    assert "timestamp.digicert.com" in sign
+
+
+def test_signing_confirms_a_signature_actually_landed(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "Get-AuthenticodeSignature" in sign
+    assert 'NotSigned' in sign
+
+
+def test_an_untrusted_certificate_chain_warns_instead_of_failing(workflows):
+    """תעודה עצמית נחתמת בהצלחה אך אינה נאמנת; אין להפיל על כך Release."""
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "::warning::" in sign
+    assert "verify /pa" not in sign
+
+
+def test_the_private_key_is_always_deleted_from_the_runner(workflows):
+    sign = release_steps(workflows)["Sign the EXE"]["run"]
+    assert "finally" in sign
+    assert "Remove-Item $pfx -Force" in sign
+
+
+def test_the_certificate_never_comes_from_the_repository(workflows):
+    """קובץ pfx במאגר הוא מפתח פרטי חשוף; הוא נקרא מסוד בלבד."""
+    commands = " ".join(
+        step.get("run", "")
+        for step in workflows["release.yml"]["jobs"]["release"]["steps"])
+    assert "certificate.pfx" not in commands
+    assert "FromBase64String($env:SIGNING_CERT_BASE64)" in commands
+
+
+def test_signing_happens_before_publishing(workflows):
+    steps = [s["name"] for s in
+             workflows["release.yml"]["jobs"]["release"]["steps"]]
+    assert steps.index("Sign the EXE") < steps.index("Upload build artifact")
+    assert steps.index("Sign the EXE") < \
+        steps.index("Create GitHub Release and upload EXE")
+
+
+def test_the_release_publishes_the_versioned_file(workflows):
+    steps = release_steps(workflows)
+    assert "$env:EXE_PATH" in steps["Create GitHub Release and upload EXE"]["run"]
+    assert steps["Upload build artifact"]["with"]["path"] == \
+        "dist/OrechMenachem_v*.exe"
+
+
+# ---------------------------------------------------------- שמירת התעודה
+@pytest.mark.parametrize("pattern", ["*.pfx", "*.p12", "*.key"])
+def test_signing_certificates_are_gitignored(pattern):
+    with open(os.path.join(PROJECT_ROOT, ".gitignore"), encoding="utf-8") as fh:
+        assert pattern in fh.read().split()
+
+
+def test_no_certificate_is_tracked_in_git():
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "ls-files"], cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
+    tracked = result.stdout.lower().split()
+    assert not [f for f in tracked
+                if f.endswith((".pfx", ".p12", ".key"))]

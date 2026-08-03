@@ -12,10 +12,33 @@ OrechMenachem.spec — מרשם בנייה ל-PyInstaller המפיק EXE ניי�
     2. סינון a.binaries/a.datas — מסיר קבצים בינאריים ונתונים ששרדו את
        הניתוח כתלות עקיפה, אף שאין להם צורך באפליקציית QtWidgets.
 
+שלושה משתני סביבה משנים את התוצר בלי לשנות את הקובץ:
+    OM_EXE_NAME     — שם ה-EXE ללא הסיומת (ברירת מחדל: OrechMenachem).
+                      זרימת ה-Release מעבירה כאן OrechMenachem_v1.2.3.
+    OM_VERSION_FILE — מידע גרסה של ווינדוס. הזרימה מייצרת אותו בזמן הבנייה
+                      מ-version_info.txt דרך stamp_version.py, כדי שהגרסה
+                      במאפייני הקובץ תהיה זהה לזו שבשם הקובץ ובתגית.
+    OM_ICON         — קובץ אייקון. ברירת המחדל היא assets/icon.ico אם קיים,
+                      ואם אין אייקון הבנייה פשוט ממשיכה בלעדיו.
+
 מריצים:  python -m PyInstaller --noconfirm --clean OrechMenachem.spec
 """
 
 import os
+
+
+# ───────────────────────────────────────────────── הגדרות שנקבעות מהסביבה
+EXE_NAME = os.environ.get("OM_EXE_NAME") or "OrechMenachem"
+
+DEFAULT_ICON = os.path.join("assets", "icon.ico")
+ICON_PATH = os.environ.get("OM_ICON") or DEFAULT_ICON
+# אייקון חסר אינו שגיאת בנייה: הוא ייכנס מעצמו ברגע שהקובץ יתווסף למאגר.
+if not os.path.isfile(ICON_PATH):
+    ICON_PATH = None
+
+VERSION_FILE = os.environ.get("OM_VERSION_FILE") or None
+if VERSION_FILE and not os.path.isfile(VERSION_FILE):
+    raise SystemExit("OM_VERSION_FILE מצביע על קובץ שאינו קיים: %s" % VERSION_FILE)
 
 
 # ─────────────────────────────────────────────── מודולים שאינם בשימוש
@@ -130,7 +153,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="OrechMenachem",
+    name=EXE_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -143,4 +166,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=ICON_PATH,
+    version=VERSION_FILE,
 )

@@ -30,7 +30,7 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Validate source files
-        run: python -m py_compile app.py converter.py theme.py
+        run: python -m py_compile app.py converter.py theme.py stamp_version.py
 
       - name: Run all tests
         run: python -m pytest -q
