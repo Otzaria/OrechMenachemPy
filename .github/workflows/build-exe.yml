@@ -1,14 +1,52 @@
-name: Build portable Windows EXE
+name: Test, build, and release
 
 on:
+  push:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "מספר גרסה ל-Release (לדוגמה: 1.2.3)"
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
-    name: Build portable EXE
+  test:
+    name: Run test suite
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Validate source files
+        run: python -m py_compile app.py converter.py theme.py
+
+      - name: Run all tests
+        run: python -m pytest -q
+
+  release:
+    name: Build and publish portable EXE
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
 
     steps:
@@ -22,14 +60,25 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Validate release version
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:VERSION.Trim()
+          if ($version -notmatch '^v?\d+\.\d+\.\d+([-.+][0-9A-Za-z.-]+)?$') {
+            throw "Version must look like 1.2.3 (an optional v prefix is allowed)."
+          }
+          if (-not $version.StartsWith("v")) {
+            $version = "v$version"
+          }
+          "RELEASE_TAG=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install "pyinstaller>=6,<7"
-
-      - name: Validate source files
-        run: python -m py_compile app.py converter.py theme.py
 
       - name: Build single-file portable EXE
         run: >
@@ -47,10 +96,21 @@ jobs:
           }
           Get-Item "dist\OrechMenachem.exe" | Format-List Name, Length
 
-      - name: Upload portable EXE
+      - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: OrechMenachem-Windows-portable
           path: dist/OrechMenachem.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Create GitHub Release and upload EXE
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create $env:RELEASE_TAG dist\OrechMenachem.exe
+          --repo "${{ github.repository }}"
+          --title "עורך מנחם $env:RELEASE_TAG"
+          --generate-notes
+          --target "${{ github.sha }}"

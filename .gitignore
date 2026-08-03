@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 
 # תוצרי בנייה מקומיים של PyInstaller
 build/
