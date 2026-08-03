@@ -232,6 +232,15 @@ def test_pick_files_does_not_add_a_file_already_in_the_list(
     assert window._all_files() == [first, second]
 
 
+def test_pick_files_adds_one_row_when_the_same_file_is_chosen_twice(
+        window, monkeypatch, tmp_path):
+    path = str(tmp_path / "a.docx")
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames",
+                        staticmethod(lambda *args, **kwargs: ([path, path], "")))
+    window.pick_files()
+    assert window._all_files() == [path]
+
+
 def test_pick_files_keeps_the_sizes_already_set_on_an_existing_row(
         window, monkeypatch, tmp_path):
     path = str(tmp_path / "a.docx")

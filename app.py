@@ -346,6 +346,7 @@ class MainWindow(QWidget):
         for p in paths:
             if p in existing:
                 continue
+            existing.add(p)   # מונע שורה כפולה גם כשאותו קובץ נבחר פעמיים
             self._add_file_row(p, default_normal, default_notes)
         self._update_file_actions()
 
