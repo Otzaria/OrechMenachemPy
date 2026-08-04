@@ -170,10 +170,12 @@ def test_the_spec_passes_its_exclude_list_to_the_analysis(spec):
 
 
 def test_the_spec_does_not_collect_whole_packages(spec):
+    """מלבד האייקון אין נתונים או בינאריים שנוספים ביד."""
     analysis = spec["_calls"]["analysis"]
     assert analysis.kwargs["binaries"] == []
-    assert analysis.kwargs["datas"] == []
     assert analysis.kwargs["hiddenimports"] == []
+    assert analysis.kwargs["datas"] == spec["ICON_DATA"]
+    assert len(spec["ICON_DATA"]) <= 1
 
 
 # --------------------------------------------- ההוצאות אינן פוגעות באפליקציה

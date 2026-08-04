@@ -617,6 +617,9 @@ def test_main_applies_the_theme_and_starts_the_event_loop(qapp, monkeypatch):
         def setStyleSheet(self, sheet):
             calls["sheet"] = sheet
 
+        def setWindowIcon(self, icon):
+            calls["icon"] = icon
+
         def exec_(self):
             return 0
 
@@ -635,3 +638,36 @@ def test_main_applies_the_theme_and_starts_the_event_loop(qapp, monkeypatch):
     assert calls["font"] == theme.FONT_FAMILY
     assert theme.PRIMARY in calls["sheet"]
     assert calls["shown"] is True
+    # האייקון מוגדר ברמת האפליקציה — משם הוא מגיע לשורת המשימות.
+    assert not calls["icon"].isNull()
+
+
+def test_main_declares_the_taskbar_identity_before_creating_the_window(
+        qapp, monkeypatch):
+    """סדר הקריאות חשוב: אחרי יצירת החלון ווינדוס כבר קבע את הזהות."""
+    order = []
+
+    class FakeApplication:
+        def __init__(self, argv):
+            order.append("application")
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+        def exec_(self):
+            return 0
+
+    class FakeWindow:
+        def __init__(self):
+            order.append("window")
+
+        def show(self):
+            pass
+
+    monkeypatch.setattr(app, "set_taskbar_identity",
+                        lambda: order.append("identity"))
+    monkeypatch.setattr(app, "QApplication", FakeApplication)
+    monkeypatch.setattr(app, "MainWindow", FakeWindow)
+    with pytest.raises(SystemExit):
+        app.main()
+    assert order == ["identity", "application", "window"]

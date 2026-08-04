@@ -21,7 +21,7 @@ import os
 import sys
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel,
@@ -31,6 +31,45 @@ from PyQt5.QtWidgets import (
 
 from converter import convert_file, DocxConverter, ConversionError
 import theme
+
+
+# ------------------------------------------------------------------ אייקון
+APP_ID = "otzaria.OrechMenachem"
+ICON_RELATIVE_PATH = os.path.join("assets", "icon.ico")
+
+
+def resource_path(relative):
+    """
+    נתיב למשאב שנארז עם התוכנה.
+
+    ב-EXE של PyInstaller במצב onefile הקבצים נפרשים לתיקייה זמנית שנתיבה
+    ב-sys._MEIPASS, ולכן אי אפשר להסתמך על מקום קובץ המקור.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
+def app_icon():
+    """האייקון של התוכנה, או אייקון ריק אם הקובץ אינו קיים."""
+    path = resource_path(ICON_RELATIVE_PATH)
+    return QIcon(path) if os.path.isfile(path) else QIcon()
+
+
+def set_taskbar_identity():
+    """
+    מזהה את התהליך לווינדוס כאפליקציה עצמאית.
+
+    בלי זה ווינדוס מקבץ את החלון תחת המפרש שהריץ אותו ומציג בשורת המשימות
+    את האייקון של python.exe במקום את האייקון שהוגדר לחלון. רלוונטי בעיקר
+    להרצה דרך "הפעלה.bat".
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:  # noqa: BLE001 — נוי בלבד; אין להפיל את התוכנה על זה
+        pass
 
 
 class Worker(QThread):
@@ -166,6 +205,9 @@ class MainWindow(QWidget):
         super().__init__()
         self.worker = None
         self.setWindowTitle("עורך מנחם — המרת וורד לטקסט בפורמט אוצריא")
+        # האייקון נקבע גם ברמת החלון וגם ברמת האפליקציה, כדי שיופיע בפס
+        # הכותרת של החלון גם כשהוא נוצר בלי לעבור דרך main().
+        self.setWindowIcon(app_icon())
         self.setLayoutDirection(Qt.RightToLeft)
         self.resize(835, 670)
         self._build_ui()
@@ -469,11 +511,15 @@ class MainWindow(QWidget):
 
 
 def main():
+    # חייב לרוץ לפני יצירת החלון, אחרת ווינדוס כבר קבע את זהות התהליך.
+    set_taskbar_identity()
     app = QApplication(sys.argv)
     app.setLayoutDirection(Qt.RightToLeft)
     app.setStyle("Fusion")
     app.setFont(theme.default_font())
     app.setStyleSheet(theme.build_stylesheet())
+    # ברמת האפליקציה האייקון חל על שורת המשימות ועל כל חלון חדש.
+    app.setWindowIcon(app_icon())
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())

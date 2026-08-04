@@ -36,6 +36,12 @@ ICON_PATH = os.environ.get("OM_ICON") or DEFAULT_ICON
 if not os.path.isfile(ICON_PATH):
     ICON_PATH = None
 
+# האייקון נדרש פעמיים ובשני אופנים שונים:
+#   • כמשאב של קובץ ה-EXE (הפרמטר icon) — מה שרואים בסייר הקבצים.
+#   • כקובץ ארוז — app.py טוען אותו בזמן ריצה כדי להציג אותו בפס הכותרת
+#     של החלון ובשורת המשימות. משאב ה-EXE אינו נגיש דרך נתיב קובץ.
+ICON_DATA = [(ICON_PATH, "assets")] if ICON_PATH else []
+
 VERSION_FILE = os.environ.get("OM_VERSION_FILE") or None
 if VERSION_FILE and not os.path.isfile(VERSION_FILE):
     raise SystemExit("OM_VERSION_FILE מצביע על קובץ שאינו קיים: %s" % VERSION_FILE)
@@ -133,7 +139,7 @@ a = Analysis(
     ["app.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=ICON_DATA,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
