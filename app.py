@@ -313,7 +313,7 @@ class MainWindow(QWidget):
         self.spin_normal.setRange(3.0, 72.0)
         self.spin_normal.setSingleStep(0.5)
         self.spin_normal.setDecimals(1)
-        self.spin_normal.setValue(11.0)
+        self.spin_normal.setValue(12.0)
         self.spin_normal.hide()  # מסתיר את תיבת הסימון
         grid.addWidget(self.spin_normal, 1, 1)
 
