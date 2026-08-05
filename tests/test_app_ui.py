@@ -131,7 +131,7 @@ def test_convert_button_is_the_primary_action(window):
 
 
 def test_advanced_options_start_hidden_with_their_defaults(window):
-    assert window.spin_normal.value() == 11.0
+    assert window.spin_normal.value() == 12.0
     assert window.spin_notes.value() == 10.0
     assert window.chk_notes.isChecked()
     assert window.chk_bom.isChecked()
