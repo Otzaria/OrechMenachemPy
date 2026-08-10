@@ -101,9 +101,37 @@ def test_macro_passes_merges_a_bold_space_between_plain_words():
     assert text(_macro_passes(source, 22)) == "a b"
 
 
-def test_macro_passes_keeps_a_trailing_bold_space_inside_the_tag():
+def test_macro_passes_moves_a_trailing_bold_space_out_of_the_tag():
     source = chars("word ", BOLD) + chars("x")
-    assert text(_macro_passes(source, 22)) == "<b>word </b>x"
+    assert text(_macro_passes(source, 22)) == "<b>word</b> x"
+
+
+def test_macro_passes_moves_edge_bold_spaces_out_of_the_tag():
+    source = chars("a") + chars(" word ", BOLD) + chars("b")
+    assert text(_macro_passes(source, 22)) == "a <b>word</b> b"
+
+
+def test_macro_passes_keeps_an_inner_bold_space_inside_the_tag():
+    source = chars("a ") + chars("w1 w2", BOLD) + chars(" b")
+    assert text(_macro_passes(source, 22)) == "a <b>w1 w2</b> b"
+
+
+def test_macro_passes_leaves_a_lone_smaller_space_untagged():
+    source = chars("a") + sized(" ", 21) + chars("b")
+    assert text(_macro_passes(source, 22)) == "a b"
+
+
+def test_macro_passes_moves_edge_small_spaces_out_of_the_tag():
+    source = chars("a") + sized(" (x) ", 20) + chars("b")
+    assert text(_macro_passes(source, 22)) == "a <small>(x)</small> b"
+
+
+def test_macro_passes_bold_word_with_smaller_spaces_around_it():
+    # כמו במסמך אמיתי: רווחים מודגשים־וקטנים סביב מילה מודגשת בגודל רגיל,
+    # ואחריהם סוגריים בגודל קטן — התגיות צמודות לטקסט והרווחים נקיים.
+    source = (chars("a.") + sized(" ", 20, bold=True) + chars("word", BOLD)
+              + sized(" ", 20, bold=True) + sized("(x)", 20) + chars(" b"))
+    assert text(_macro_passes(source, 22)) == "a. <b>word</b> <small>(x)</small> b"
 
 
 def test_macro_passes_merges_underline_ranges_separated_by_a_space():
