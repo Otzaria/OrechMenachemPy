@@ -91,8 +91,20 @@ def test_strip_line_end_spaces_cleans_every_manual_line_break():
     assert text(_strip_line_end_spaces(chars("a \nb  \nc "))) == "a\nb\nc"
 
 
-def test_strip_line_end_spaces_keeps_tabs():
-    assert text(_strip_line_end_spaces(chars("a\t"))) == "a\t"
+def test_strip_line_end_spaces_also_removes_tabs():
+    """טאב שאין אחריו טקסט הוא שגיאת הקלדה — נמחק כמו רווח."""
+    assert text(_strip_line_end_spaces(chars("a\t"))) == "a"
+    assert text(_strip_line_end_spaces(chars("a\t\t"))) == "a"
+    assert text(_strip_line_end_spaces(chars("a \t "))) == "a"
+    assert _strip_line_end_spaces(chars("\t\t")) == []
+
+
+def test_strip_line_end_spaces_removes_tabs_before_a_manual_break():
+    assert text(_strip_line_end_spaces(chars("a\t\nb\t \nc\t"))) == "a\nb\nc"
+
+
+def test_strip_line_end_spaces_keeps_a_tab_that_has_text_after_it():
+    assert text(_strip_line_end_spaces(chars("a\tb"))) == "a\tb"
 
 
 # ------------------------------------------------------------- _macro_passes
@@ -200,11 +212,11 @@ def test_macro_passes_merges_size_ranges_separated_by_a_space():
     assert text(_macro_passes(source, 22)) == "<big>a b</big>"
 
 
-@pytest.mark.parametrize("value", ["", "   ", " "])
+@pytest.mark.parametrize("value", ["", "   ", " ", "\t", "\t ", " \t\t "])
 def test_macro_passes_returns_none_for_paragraphs_left_empty(value):
     assert _macro_passes(chars(value), 22) is None
 
 
-@pytest.mark.parametrize("value", [" \n ", "\t ", " a "])
+@pytest.mark.parametrize("value", [" \n ", " a ", "\ta"])
 def test_macro_passes_keeps_paragraphs_with_content_after_stripping(value):
     assert _macro_passes(chars(value), 22) is not None

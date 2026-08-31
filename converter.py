@@ -56,6 +56,46 @@ class ConversionError(Exception):
 _WS = " \t\n"
 
 
+# מרחב השמות של תאימות סימון (mc:Choice / mc:Fallback)
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+# רכיבי תוכן של ריצה (w:r) — רק הם מייצגים תווים בפסקה. אותם שמות מקומיים
+# מופיעים גם במאפייני הפסקה, ובראשם w:pPr/w:tabs/w:tab — שהוא הגדרת
+# *עצירת טאב* של הפסקה ולא תו טאב. לכן רכיב שהוא במרחב השמות של Word נחשב
+# תוכן רק אם הוא ילד ישיר של w:r. רכיבים ממרחבי שמות אחרים (DrawingML a:t,
+# נוסחאות m:t) נבדקים לפי המכולה בלבד, כדי לא לאבד טקסט: ההורה שלהם עשוי
+# להיות a:fld או a:p ולא ריצה.
+_RUN_CONTENT = ("t", "tab", "br", "cr", "noBreakHyphen",
+                "footnoteRef", "footnoteReference")
+
+# מכולות שכל תוכנן אינו נפלט: מאפייני פסקה, טקסט שנמחק או הועבר במעקב
+# שינויים, והענף שוורד אינו מציג ב‑mc:AlternateContent (כפילות של mc:Choice).
+_SKIPPED_CONTAINERS = frozenset((
+    "{%s}pPr" % W, "{%s}del" % W, "{%s}moveFrom" % W, "{%s}Fallback" % MC))
+
+
+def _in_skipped_container(el):
+    """True אם el נמצא בתוך מכולה שאינה נפלטת (ראה _SKIPPED_CONTAINERS)."""
+    node = el.getparent()
+    while node is not None:
+        if node.tag in _SKIPPED_CONTAINERS:
+            return True
+        node = node.getparent()
+    return False
+
+
+def _is_para_content(el, p):
+    """True אם el הוא תוכן שנפלט לשורה של הפסקה p.
+    עוצר בפסקה מקוננת (w:p שבתוך תיבת טקסט) — היא נפלטת כשורה נפרדת,
+    ואינה מוטמעת באמצע השורה של הפסקה המכילה."""
+    node = el.getparent()
+    while node is not None and node is not p:
+        if node.tag in _SKIPPED_CONTAINERS or node.tag == "{%s}p" % W:
+            return False
+        node = node.getparent()
+    return True
+
+
 def _wrap_pass(chars, pred, otag, ctag):
     """עוטף טווחים רציפים מקסימליים שבהם pred(props) אמת.
     רווחים בקצוות הטווח נשארים מחוץ לתגיות (התגיות צמודות לטקסט), וטווח
@@ -110,15 +150,21 @@ def _replace_literal(chars, pat, rep):
     return out
 
 
+# תווי רווח שנמחקים בסוף שורה (רווח וטאב) — כמו '[ ^9]@^13' -> '^13' במאקרו.
+# טאב בסוף שורה הוא כמעט תמיד שגיאת הקלדה, ואין לו משמעות בטקסט הסופי.
+_TRAILING_WS = (" ", "\t")
+
+
 def _strip_line_end_spaces(chars):
-    """מסיר רווחים בסוף הפסקה ולפני מעברי שורה ידניים (כמו '[ ]@^13' -> '^13')."""
+    """מסיר רווחים וטאבים בסוף הפסקה ולפני מעברי שורה ידניים
+    (כמו '[ ^9]@^13' -> '^13' ו‑'[ ^9]@^11' -> '^11' במאקרו)."""
     out = []
     for item in chars:
         if item[0] == "\n":
-            while out and out[-1][0] == " ":
+            while out and out[-1][0] in _TRAILING_WS:
                 out.pop()
         out.append(item)
-    while out and out[-1][0] == " ":
+    while out and out[-1][0] in _TRAILING_WS:
         out.pop()
     return out
 
@@ -369,6 +415,15 @@ class DocxConverter:
         skip_one_ws = False
         for el in p.iter():
             name = _local(el)
+            if name not in _RUN_CONTENT:
+                continue
+            parent = el.getparent()
+            if parent is None:
+                continue
+            if el.tag == w(name) and parent.tag != w("r"):
+                continue  # לא תוכן של ריצה (למשל w:tab שבתוך w:pPr/w:tabs)
+            if not _is_para_content(el, p):
+                continue  # מחוק במעקב שינויים / ענף mc:Fallback / פסקה מקוננת
             if name == "footnoteRef":
                 skip_one_ws = True
                 continue
@@ -432,6 +487,9 @@ class DocxConverter:
             fid = ref.get(w("id"))
             if fid is None or fid not in self.footnotes or fid in fn_map:
                 continue
+            if ref.getparent() is None or ref.getparent().tag != w("r") \
+                    or _in_skipped_container(ref):
+                continue  # הפניה מחוקה או בענף mc:Fallback — אינה נספרת
             num += 1
             fn_map[fid] = num
             order.append(fid)
@@ -474,6 +532,8 @@ class DocxConverter:
         # להחליף את סימן הפסקה האחרון) ונשמרות כשורות ריקות.
         paras = []
         for p in body.iter(w("p")):
+            if _in_skipped_container(p):
+                continue  # פסקה מחוקה או בענף mc:Fallback (כפילות)
             level = self._para_heading_level(p)
             pstyle = self._para_style(p)
             refs = []
@@ -527,9 +587,14 @@ class DocxConverter:
         for p in body.iter(w("p")):
             if self._para_heading_level(p) is not None:
                 continue
+            if _in_skipped_container(p):
+                continue
             pstyle = self._para_style(p)
             for t in p.iter(w("t")):
                 run = t.getparent()
+                if run is None or run.tag != w("r") \
+                        or not _is_para_content(t, p):
+                    continue
                 rpr = run.find(w("rPr"))
                 run_rpr = self._extract_rpr(rpr) if rpr is not None else {}
                 rstyle = None

@@ -219,6 +219,23 @@ def test_tab_is_kept_as_a_tab_character(write_docx):
     assert convert_body(write_docx, body)[0] == "a\tb"
 
 
+def test_tab_stop_definition_in_paragraph_properties_is_not_a_tab_character(write_docx):
+    """w:pPr/w:tabs/w:tab הוא הגדרת עצירת טאב — לא תו בטקסט."""
+    ppr = '<w:pPr><w:tabs><w:tab w:val="left" w:pos="4394"/></w:tabs></w:pPr>'
+    body = para(run("ab"), ppr)
+    assert convert_body(write_docx, body)[0] == "ab"
+
+
+def test_tab_stop_definition_in_a_footnote_is_not_a_tab_character(write_docx):
+    ppr = '<w:pPr><w:tabs><w:tab w:val="left" w:pos="4394"/></w:tabs></w:pPr>'
+    footnotes = footnotes_xml(footnote("1", para(
+        '<w:r><w:footnoteRef/></w:r>' + run(" note"), ppr)))
+    body = para(run("x") + '<w:r><w:footnoteReference w:id="1"/></w:r>')
+    text, notes = convert_body(write_docx, body, footnotes=footnotes)
+    assert text == "x<sup>1</sup>"
+    assert notes == "<sup>1</sup> note\r\n"
+
+
 def test_manual_break_becomes_a_crlf_inside_the_same_paragraph(write_docx):
     body = para(run("a") + "<w:r><w:br/></w:r>" + run("b"))
     assert convert_body(write_docx, body)[0] == "a\r\nb"
