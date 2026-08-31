@@ -96,6 +96,46 @@ def _is_para_content(el, p):
     return True
 
 
+# רכיבי mc:AlternateContent אינם חלק ממודל התוכן של Word: לפי MCE הם הורים
+# חוקיים בכל מקום, ותופסים את מקום התוכן שהיה חוקי שם. לכן הם עשויים לחצוץ
+# בין ריצה לתוכן שלה — ‎<w:r><mc:AlternateContent><mc:Choice><w:t>…‎ — ויש
+# לדלג מעליהם בחיפוש הריצה, אחרת הטקסט נזרק.
+_MCE_TRANSPARENT = frozenset((
+    "{%s}AlternateContent" % MC, "{%s}Choice" % MC, "{%s}Fallback" % MC))
+
+
+def _builtin_heading_level(style_id, style_name):
+    """1..9 אם הסגנון הוא אחד מסגנונות הכותרת המובנים, אחרת None.
+
+    ב‑OOXML השם הראשי של סגנון מובנה הוא באנגלית ואינו תלוי בשפת הממשק:
+    גם וורד עברי כותב ‎<w:name w:val="heading 1"/>‎. ה‑styleId לעומת זאת
+    נקבע ע"י המפיק (וורד לפעמים כותב פשוט "1"), ולכן בודקים גם אותו."""
+    for value in (style_name, style_id):
+        if not value:
+            continue
+        text = value.strip().lower()
+        for prefix in ("heading", "כותרת"):
+            if text.startswith(prefix):
+                rest = text[len(prefix):].strip()
+                if rest.isdigit() and 1 <= int(rest) <= 9:
+                    return int(rest)
+    return None
+
+
+def _enclosing_run(el, p=None):
+    """הריצה (w:r) שהרכיב el הוא תוכן שלה, או None אם אינו תוכן של ריצה.
+    זו הבדיקה שמונעת את הבאג המקורי: w:tab שבתוך w:pPr/w:tabs הוא הגדרת
+    עצירת טאב, ההורה שלו הוא w:tabs, ולכן אין לו ריצה עוטפת."""
+    node = el.getparent()
+    while node is not None and node is not p:
+        if node.tag == "{%s}r" % W:
+            return node
+        if node.tag not in _MCE_TRANSPARENT:
+            return None
+        node = node.getparent()
+    return None
+
+
 def _wrap_pass(chars, pred, otag, ctag):
     """עוטף טווחים רציפים מקסימליים שבהם pred(props) אמת.
     רווחים בקצוות הטווח נשארים מחוץ לתגיות (התגיות צמודות לטקסט), וטווח
@@ -288,8 +328,12 @@ class DocxConverter:
         except KeyError:
             return
         for fn in froot.findall(w("footnote")):
-            if fn.get(w("type")) in ("separator", "continuationSeparator"):
-                continue  # מפרידים – לא הערות אמיתיות
+            # רק הערה מסוג "normal" (או בלי סוג) היא הערה אמיתית. הסוגים
+            # האחרים הם רשומות שירות של וורד: separator ו‑continuationSeparator
+            # הם הקווים המפרידים, ו‑continuationNotice היא הודעת "ההערה נמשכת
+            # בעמוד הבא". גם וורד עצמו אינו סופר אותן ב‑Footnotes.Count.
+            if fn.get(w("type")) not in (None, "normal"):
+                continue
             fid = fn.get(w("id"))
             if fid is not None:
                 self.footnotes[fid] = fn
@@ -365,14 +409,34 @@ class DocxConverter:
                 va == "superscript", va == "subscript", size)
 
     # --------------------------------------------------- רמת כותרת של פסקה
-    def _style_outline(self, sid, seen=None):
-        seen = seen or set()
+    def _style_chain(self, sid):
+        """שרשרת הסגנונות מ‑sid ומעלה דרך basedOn, בלי לולאות."""
+        seen = set()
+        out = []
         while sid and sid in self.styles and sid not in seen:
             seen.add(sid)
-            info = self.styles[sid]
-            if info["outline"] is not None:
-                return info["outline"]
-            sid = info["basedOn"]
+            out.append(sid)
+            sid = self.styles[sid]["basedOn"]
+        return out
+
+    def _style_outline(self, sid, seen=None):
+        """רמת הכותרת של הסגנון, או None.
+
+        קודם מחפשים outlineLvl מפורש בשרשרת הסגנונות. אם אין — נסמכים על
+        ברירת המחדל המובנית של סגנונות הכותרת, כמו שוורד עושה: בוורד
+        para.OutlineLevel של פסקה בסגנון "heading 1" הוא 1 גם בלי שנכתב
+        outlineLvl, והמאקרו קורא בדיוק את הערך הזה. וורד עצמו כן כותב את
+        outlineLvl, אבל מפיקים אחרים (python‑docx, המרות מ‑HTML וכו') לא
+        תמיד — ובלי הנפילה הזו הכותרת הייתה נפלטת כטקסט רגיל עם תגי גודל.
+        """
+        chain = self._style_chain(sid)
+        for s in chain:
+            if self.styles[s]["outline"] is not None:
+                return self.styles[s]["outline"]
+        for s in chain:
+            lvl = _builtin_heading_level(s, self.styles[s].get("name"))
+            if lvl is not None:
+                return lvl - 1  # outlineLvl הוא מבוסס‑אפס
         return None
 
     def _para_style(self, p):
@@ -412,20 +476,30 @@ class DocxConverter:
         """
         neutral = (False, False, False, False, False, normal_hp)
         chars = []
-        skip_one_ws = False
+        # בתוך הערה: כל הרווחים שבין סימן ההערה לתחילת הטקסט נבלעים, כך
+        # שבקובץ ההערות יש תמיד רווח אחד בדיוק אחרי <sup>מספר</sup>.
+        # כך גם במאקרו: Footnote.Range.text של וורד מתחיל בטקסט ההערה
+        # עצמו, בלי הסימן ובלי הרווח שאחריו, והתחליף מוסיף רווח אחד.
+        skip_leading_ws = False
         for el in p.iter():
             name = _local(el)
             if name not in _RUN_CONTENT:
                 continue
-            parent = el.getparent()
-            if parent is None:
+            if el.getparent() is None:
                 continue
-            if el.tag == w(name) and parent.tag != w("r"):
-                continue  # לא תוכן של ריצה (למשל w:tab שבתוך w:pPr/w:tabs)
+            if el.tag == w(name):
+                # תוכן במרחב השמות של Word חייב לשבת בתוך ריצה
+                run = _enclosing_run(el, p)
+                if run is None:
+                    continue  # למשל w:tab שבתוך w:pPr/w:tabs
+            else:
+                # DrawingML / נוסחאות: ההורה עשוי להיות a:fld או a:p ולא ריצה,
+                # והמאפיינים נלקחים ממנו כמו קודם.
+                run = el.getparent()
             if not _is_para_content(el, p):
                 continue  # מחוק במעקב שינויים / ענף mc:Fallback / פסקה מקוננת
             if name == "footnoteRef":
-                skip_one_ws = True
+                skip_leading_ws = True
                 continue
             if name == "footnoteReference":
                 if in_footnote:
@@ -438,28 +512,27 @@ class DocxConverter:
                 continue
             if name == "t":
                 text = el.text or ""
-                if skip_one_ws and text.startswith((" ", "\t")):
-                    text = text[1:]
-                if text or name == "t":
-                    skip_one_ws = False
+                if skip_leading_ws:
+                    text = text.lstrip(" \t")
+                    if text:
+                        skip_leading_ws = False
                 if not text:
                     continue
-                props = self._run_props(el.getparent(), pstyle, normal_hp)
+                props = self._run_props(run, pstyle, normal_hp)
                 for ch in text:
                     chars.append([ch, props])
             elif name == "tab":
-                if skip_one_ws:
-                    skip_one_ws = False
+                if skip_leading_ws:
                     continue
-                props = self._run_props(el.getparent(), pstyle, normal_hp)
+                props = self._run_props(run, pstyle, normal_hp)
                 chars.append(["\t", props])
             elif name in ("br", "cr"):
-                skip_one_ws = False
-                props = self._run_props(el.getparent(), pstyle, normal_hp)
+                skip_leading_ws = False
+                props = self._run_props(run, pstyle, normal_hp)
                 chars.append(["\n", props])
             elif name == "noBreakHyphen":
-                skip_one_ws = False
-                props = self._run_props(el.getparent(), pstyle, normal_hp)
+                skip_leading_ws = False
+                props = self._run_props(run, pstyle, normal_hp)
                 chars.append(["-", props])
         return chars
 
@@ -487,8 +560,7 @@ class DocxConverter:
             fid = ref.get(w("id"))
             if fid is None or fid not in self.footnotes or fid in fn_map:
                 continue
-            if ref.getparent() is None or ref.getparent().tag != w("r") \
-                    or _in_skipped_container(ref):
+            if _enclosing_run(ref) is None or _in_skipped_container(ref):
                 continue  # הפניה מחוקה או בענף mc:Fallback — אינה נספרת
             num += 1
             fn_map[fid] = num
@@ -591,9 +663,8 @@ class DocxConverter:
                 continue
             pstyle = self._para_style(p)
             for t in p.iter(w("t")):
-                run = t.getparent()
-                if run is None or run.tag != w("r") \
-                        or not _is_para_content(t, p):
+                run = _enclosing_run(t, p)
+                if run is None or not _is_para_content(t, p):
                     continue
                 rpr = run.find(w("rPr"))
                 run_rpr = self._extract_rpr(rpr) if rpr is not None else {}

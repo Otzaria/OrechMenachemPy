@@ -251,3 +251,156 @@ def test_suggest_body_size_ignores_deleted_text(write_docx):
             + '</w:del>')
     conv = DocxConverter(write_docx(document=document(body)))
     assert conv.suggest_body_size() == 12.0
+
+
+# ------------------------------- mc:Choice כהורה ישיר של תוכן ריצה
+# לפי MCE רכיבי mc:* הם הורים חוקיים בכל מקום, ולכן mc:Choice עשוי לחצוץ בין
+# w:r לתוכן שלה. וורד פותח קבצים כאלה ופולט את הטקסט, וכך גם המאקרו.
+CHOICE = '<mc:AlternateContent><mc:Choice Requires="w14">%s</mc:Choice></mc:AlternateContent>'
+
+
+def test_text_held_directly_by_mc_choice_is_not_lost(write_docx):
+    body = para(run("לפני ")
+                + "<w:r>" + CHOICE % "<w:t>באמצע</w:t>" + "</w:r>"
+                + run(" אחרי"))
+    assert convert(write_docx, body)[0] == "לפני באמצע אחרי"
+
+
+def test_a_tab_held_directly_by_mc_choice_is_not_lost(write_docx):
+    body = para(run("א")
+                + "<w:r>" + CHOICE % "<w:tab/>" + "</w:r>"
+                + run("ב"))
+    assert convert(write_docx, body)[0] == "א\tב"
+
+
+def test_a_break_held_directly_by_mc_choice_is_not_lost(write_docx):
+    body = para(run("א")
+                + "<w:r>" + CHOICE % "<w:br/>" + "</w:r>"
+                + run("ב"))
+    assert convert(write_docx, body)[0] == "א\r\nב"
+
+
+def test_a_hyphen_held_directly_by_mc_choice_is_not_lost(write_docx):
+    body = para(run("א")
+                + "<w:r>" + CHOICE % "<w:noBreakHyphen/>" + "</w:r>"
+                + run("ב"))
+    assert convert(write_docx, body)[0] == "א-ב"
+
+
+def test_a_footnote_reference_held_by_mc_choice_still_produces_a_notes_file(write_docx):
+    """המקרה החמור: אבדן ההפניה היה מבטל גם את כל קובץ ההערות."""
+    footnotes = footnotes_xml(footnote(
+        "1", '<w:p><w:r><w:footnoteRef/><w:t xml:space="preserve"> '
+             'הערה</w:t></w:r></w:p>'))
+    body = para(run("א")
+                + "<w:r>" + CHOICE % '<w:footnoteReference w:id="1"/>' + "</w:r>")
+    text, notes = convert(write_docx, body, footnotes=footnotes)
+    assert text == "א<sup>1</sup>"
+    assert notes == "<sup>1</sup> הערה\r\n"
+
+
+def test_formatting_of_text_held_by_mc_choice_comes_from_the_enclosing_run(write_docx):
+    """התגית נקבעת לפי w:rPr של הריצה, גם כשהתוכן יורד רמה תחת mc:Choice."""
+    body = para("<w:r>" + rpr("<w:bCs/>") + CHOICE % "<w:t>מודגש</w:t>" + "</w:r>")
+    assert convert(write_docx, body)[0] == "<b>מודגש</b>"
+
+
+def test_tab_stops_are_still_ignored_when_mce_elements_are_present(write_docx):
+    """התיקון ל‑mc:Choice לא החזיר את הבאג המקורי."""
+    body = para("<w:r>" + CHOICE % "<w:t>שורה</w:t>" + "</w:r>", TAB_STOPS)
+    assert convert(write_docx, body)[0] == "שורה"
+
+
+# ------------------------------- רשומות שירות באזור ההערות אינן הערות
+@pytest.mark.parametrize("kind", ["separator", "continuationSeparator",
+                                  "continuationNotice"])
+def test_service_footnote_records_are_not_counted_as_notes(write_docx, kind):
+    """וורד שומר באזור ההערות גם קווים מפרידים והודעת "ההערה נמשכת".
+
+    Footnotes.Count של וורד אינו סופר אותן, ולכן גם המונה שמוצג למשתמש
+    ובחירת המספור לא צריכים לספור אותן.
+    """
+    service = ('<w:footnote w:id="9" w:type="%s"><w:p><w:r>'
+               '<w:t>המשך בעמוד הבא</w:t></w:r></w:p></w:footnote>' % kind)
+    real = ('<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/>'
+            '<w:t xml:space="preserve"> הערה</w:t></w:r></w:p></w:footnote>')
+    footnotes = '<w:footnotes xmlns:w="%s">%s%s</w:footnotes>' % (W, service, real)
+    conv = DocxConverter(write_docx(
+        document=document(para(run("א")
+                               + '<w:r><w:footnoteReference w:id="1"/></w:r>')),
+        footnotes=footnotes))
+    text, notes = conv.convert(11, 10)
+    assert len(conv.footnotes) == 1
+    assert text == "א<sup>1</sup>"
+    assert notes == "<sup>1</sup> הערה\r\n"
+
+
+# ------------------- רמת כותרת מברירת המחדל המובנית של סגנון "heading N"
+def style(style_id, name=None, outline=None, based_on=None, run_props=""):
+    inner = ""
+    if name is not None:
+        inner += '<w:name w:val="%s"/>' % name
+    if based_on is not None:
+        inner += '<w:basedOn w:val="%s"/>' % based_on
+    if outline is not None:
+        inner += '<w:pPr><w:outlineLvl w:val="%d"/></w:pPr>' % outline
+    inner += run_props
+    return ('<w:style w:type="paragraph" w:styleId="%s">%s</w:style>'
+            % (style_id, inner))
+
+
+def styles_of(*items):
+    return '<w:styles xmlns:w="%s">%s</w:styles>' % (W, "".join(items))
+
+
+def heading_para(style_id):
+    return ('<w:p><w:pPr><w:pStyle w:val="%s"/></w:pPr>'
+            '<w:r><w:rPr><w:szCs w:val="32"/></w:rPr>'
+            '<w:t>פרק א</w:t></w:r></w:p>' % style_id)
+
+
+@pytest.mark.parametrize("level", [1, 3, 9])
+def test_a_builtin_heading_style_without_outline_level_is_still_a_heading(
+        write_docx, level):
+    """וורד כן כותב outlineLvl, אבל מפיקים אחרים לא תמיד.
+
+    בוורד para.OutlineLevel של פסקה בסגנון "heading N" הוא N גם בלי
+    outlineLvl מפורש, והמאקרו קורא בדיוק את הערך הזה — ולכן בלי הנפילה
+    הזו הפייתון היה מפספס את הכותרת ופולט אותה כטקסט עם תגי גודל.
+    """
+    styles = styles_of(style("H", name="heading %d" % level))
+    out = convert(write_docx, heading_para("H"), styles)[0]
+    assert out == "<h%d>פרק א</h%d>" % (level, level)
+
+
+def test_the_style_id_alone_is_enough_to_recognise_a_heading(write_docx):
+    """מפיקים שאינם כותבים w:name בכלל."""
+    styles = styles_of(style("Heading2"))
+    assert convert(write_docx, heading_para("Heading2"), styles)[0] == \
+        "<h2>פרק א</h2>"
+
+
+def test_a_heading_level_inherited_through_based_on_is_found(write_docx):
+    styles = styles_of(style("MyHead", name="My Head", based_on="H1base"),
+                       style("H1base", name="heading 1"))
+    assert convert(write_docx, heading_para("MyHead"), styles)[0] == \
+        "<h1>פרק א</h1>"
+
+
+def test_an_explicit_outline_level_still_wins_over_the_builtin_default(write_docx):
+    """סגנון בשם "heading 1" שהוגדר במפורש כטקסט גוף (9) אינו כותרת."""
+    styles = styles_of(style("H", name="heading 1", outline=9))
+    assert convert(write_docx, heading_para("H"), styles)[0] != "<h1>פרק א</h1>"
+
+
+def test_an_explicit_outline_level_overrides_the_name(write_docx):
+    styles = styles_of(style("H", name="heading 1", outline=2))
+    assert convert(write_docx, heading_para("H"), styles)[0] == "<h3>פרק א</h3>"
+
+
+@pytest.mark.parametrize("name", ["heading", "heading 0", "heading 10",
+                                  "headings 1", "Heading One", "subheading 1"])
+def test_names_that_are_not_builtin_heading_styles_are_not_promoted(
+        write_docx, name):
+    styles = styles_of(style("H", name=name))
+    assert not convert(write_docx, heading_para("H"), styles)[0].startswith("<h")

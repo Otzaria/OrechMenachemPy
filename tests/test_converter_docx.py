@@ -338,13 +338,47 @@ def test_empty_paragraphs_around_a_footnote_are_trimmed(write_docx):
         "<sup>1</sup> תוכן\r\n"
 
 
-def test_footnote_reference_mark_and_the_space_after_it_are_removed(write_docx):
+@pytest.mark.parametrize(
+    "note_runs",
+    [
+        # רווח אחד — המקרה שוורד עצמו כותב
+        '<w:r><w:footnoteRef/><w:t xml:space="preserve"> טקסט</w:t></w:r>',
+        # שני רווחים
+        '<w:r><w:footnoteRef/><w:t xml:space="preserve">  טקסט</w:t></w:r>',
+        # ארבעה רווחים, מפוצלים בין ריצות
+        '<w:r><w:footnoteRef/><w:t xml:space="preserve">  </w:t></w:r>'
+        '<w:r><w:t xml:space="preserve">  טקסט</w:t></w:r>',
+        # ריצה ריקה בין הסימן לטקסט
+        '<w:r><w:footnoteRef/></w:r><w:r><w:t/></w:r>'
+        '<w:r><w:t xml:space="preserve"> טקסט</w:t></w:r>',
+        # טאב במקום רווח
+        '<w:r><w:footnoteRef/><w:tab/></w:r>'
+        '<w:r><w:t xml:space="preserve"> טקסט</w:t></w:r>',
+        # בלי שום רווח
+        '<w:r><w:footnoteRef/><w:t>טקסט</w:t></w:r>',
+    ],
+)
+def test_the_notes_file_always_has_exactly_one_space_after_the_number(
+        write_docx, note_runs):
+    """הרווח שאחרי <sup>מספר</sup> מגיע מהקוד, לא מהמקור.
+
+    כל רווח שוורד שם בין סימן ההערה לטקסט נבלע, בכל כמות ובכל צורה, כדי
+    שכל שורה בקובץ ההערות תיראה אותו דבר.
+    """
     body = para(run("a") + '<w:r><w:footnoteReference w:id="1"/></w:r>')
-    footnotes = footnotes_xml(
-        footnote("1", '<w:p><w:r><w:footnoteRef/><w:t>  שתי רווחים</w:t></w:r></w:p>'),
-    )
+    footnotes = footnotes_xml(footnote("1", "<w:p>%s</w:p>" % note_runs))
     assert convert_body(write_docx, body, footnotes=footnotes)[1] == \
-        "<sup>1</sup>  שתי רווחים\r\n"
+        "<sup>1</sup> טקסט\r\n"
+
+
+def test_whitespace_inside_the_note_text_is_untouched(write_docx):
+    """רק הרווחים שלפני תחילת הטקסט נבלעים."""
+    body = para(run("a") + '<w:r><w:footnoteReference w:id="1"/></w:r>')
+    footnotes = footnotes_xml(footnote(
+        "1", '<w:p><w:r><w:footnoteRef/>'
+             '<w:t xml:space="preserve"> א  ב</w:t></w:r></w:p>'))
+    assert convert_body(write_docx, body, footnotes=footnotes)[1] == \
+        "<sup>1</sup> א  ב\r\n"
 
 
 def test_nested_footnote_reference_inside_a_footnote_is_skipped(write_docx):
