@@ -19,11 +19,14 @@ converter.py — מנוע ההמרה של "עורך מנחם" מ‑Word (.docx) 
     • אחרי כל מעבר מבוצעים המיזוגים "</b> <b>" -> " " ו‑"<b> </b>" -> " ".
     • סימני הערות שוליים מנוטרלים (עיצוב רגיל) ומוחלפים ב‑<sup>מספר</sup>.
     • ההערות נשמרות לקובץ נפרד "הערות על <שם>.txt" (מעברי פסקה בפנים -> <br>).
+    • טקסט נסתר (w:vanish) מושמט, ותווית המספור האוטומטי של וורד (numbering.xml)
+      נוספת כטקסט רגיל בתחילת הפסקה — גם בכותרות ובהערות השוליים.
 
 הפלט: UTF‑8 עם BOM ושורות CRLF, שורה אחת לכל פסקה (שורות ריקות מושמטות).
 """
 
 import os
+import re
 import zipfile
 from lxml import etree
 
@@ -42,6 +45,71 @@ def _local(el):
 
 # תו מציין‑מקום לסימן הערת שוליים (מוחלף בסוף ב‑<sup>מספר</sup>)
 _FNREF = "\x02"
+
+# תבליטים של וורד נשמרים בגופני סמלים (תחום PUA); ממפים לתו רגיל
+_BULLETS = {"\uf0b7": "\u2022", "\uf0a7": "\u25aa", "\uf0d8": "\u27a2",
+            "\uf0fc": "\u2713", "o": "\u25e6", "\uf076": "\u2756", "\uf02d": "-"}
+
+_HEB_UNITS = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"]
+_HEB_TENS = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"]
+_HEB_HUNDREDS = ["", "ק", "ר", "ש", "ת"]
+_HEB_ALPHABET = "אבגדהוזחטיכלמנסעפצקרשת"
+
+
+def _hebrew1(n):
+    """מספור עברי גימטרי של וורד (hebrew1): 1=א … 15=טו, 16=טז, 400=ת, 500=תק."""
+    if n == 0:
+        return ""  # וורד מציג מונה אפס בכתב עברי כריק (נמדד מול ListString: ']' לבדה)
+    if n < 1 or n >= 1000:
+        return str(n)
+    out = ""
+    while n >= 400:
+        out += "ת"
+        n -= 400
+    out += _HEB_HUNDREDS[n // 100]
+    n %= 100
+    if n in (15, 16):
+        return out + ("טו" if n == 15 else "טז")
+    return out + _HEB_TENS[n // 10] + _HEB_UNITS[n % 10]
+
+
+def _letters(n, alphabet):
+    """a, b … z, aa, bb … (וורד חוזר על אותה אות, לא aa ← ab)."""
+    if n < 1:
+        return str(n)
+    k = (n - 1) // len(alphabet) + 1
+    return alphabet[(n - 1) % len(alphabet)] * k
+
+
+def _roman(n):
+    if n < 1 or n >= 4000:
+        return str(n)
+    out = ""
+    for val, sym in ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"),
+                     (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"),
+                     (5, "v"), (4, "iv"), (1, "i")):
+        while n >= val:
+            out += sym
+            n -= val
+    return out
+
+
+def _format_number(n, fmt):
+    if fmt == "hebrew1":
+        return _hebrew1(n)
+    if fmt == "hebrew2":
+        return _letters(n, _HEB_ALPHABET)
+    if fmt == "lowerLetter":
+        return _letters(n, "abcdefghijklmnopqrstuvwxyz")
+    if fmt == "upperLetter":
+        return _letters(n, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    if fmt == "lowerRoman":
+        return _roman(n)
+    if fmt == "upperRoman":
+        return _roman(n).upper()
+    if fmt == "decimalZero":
+        return "%02d" % n
+    return str(n)  # decimal ושאר הפורמטים
 
 
 class ConversionError(Exception):
@@ -282,6 +350,14 @@ class DocxConverter:
         self.footnotes = {}       # id(str) -> footnote element
         self._load_footnotes()
 
+        self._hidden_cache = {}   # ריצה -> האם הטקסט שלה נסתר (w:vanish)
+        self.abstract_nums = {}   # abstractNumId -> {ilvl: מאפייני רמה}
+        self.nums = {}            # numId -> {"abs": ..., "overrides": {ilvl: start}}
+        self._num_state = {}      # abstractNumId -> {ilvl: מונה נוכחי}
+        self._num_started = set() # numId שכבר הופיעו (startOverride חל רק בהופעה הראשונה)
+        self._num_story = "body"  # גוף / "fn" (הערות שוליים) — לכל חלק מוני רשימה משלו
+        self._load_numbering()
+
     # ------------------------------------------------------------------ סגנונות
     def _load_styles(self):
         try:
@@ -307,7 +383,15 @@ class DocxConverter:
                 "name": name.get(w("val")) if name is not None else "",
                 "outline": None,
                 "rpr": {},
+                "numPr": None,
             }
+            snp = st.find("%s/%s" % (w("pPr"), w("numPr")))
+            if snp is not None:
+                sn_id = snp.find(w("numId"))
+                sn_lv = snp.find(w("ilvl"))
+                info["numPr"] = (
+                    sn_id.get(w("val")) if sn_id is not None else None,
+                    int(sn_lv.get(w("val"))) if sn_lv is not None else None)
             ol = st.find("%s/%s" % (w("pPr"), w("outlineLvl")))
             if ol is not None:
                 try:
@@ -353,6 +437,9 @@ class DocxConverter:
             el = rpr.find(w(name))
             if el is not None:
                 d[name] = self._toggle(el)
+        el = rpr.find(w("vanish"))
+        if el is not None:
+            d["vanish"] = self._toggle(el)
         u = rpr.find(w("u"))
         if u is not None:
             d["u"] = (u.get(w("val")) not in (None, "none"))
@@ -407,6 +494,181 @@ class DocxConverter:
         size = self._resolve("szCs", run_rpr, rstyle, pstyle)
         return (bold, underline, italic,
                 va == "superscript", va == "subscript", size)
+
+    def _run_hidden(self, r, pstyle):
+        """True אם הטקסט של הריצה נסתר בוורד (w:vanish: ריצה -> סגנון תו ->
+        סגנון פסקה -> ברירת מחדל). טקסט נסתר אינו מוצג ואינו מודפס ואינו
+        ב‑PDF, ולכן אסור שיגיע לפלט."""
+        hit = self._hidden_cache.get(r)
+        if hit is not None:
+            return hit
+        rpr = r.find(w("rPr"))
+        run_rpr = self._extract_rpr(rpr) if rpr is not None else {}
+        rstyle = None
+        if rpr is not None:
+            rs = rpr.find(w("rStyle"))
+            if rs is not None:
+                rstyle = rs.get(w("val"))
+        hidden = bool(self._resolve("vanish", run_rpr, rstyle, pstyle))
+        self._hidden_cache[r] = hidden
+        return hidden
+
+    # ------------------------------------------------------------ מספור אוטומטי
+    def _load_numbering(self):
+        """קורא את numbering.xml: הגדרות רמות (abstractNum) ומופעי רשימה (num)."""
+        try:
+            nroot = etree.fromstring(self.zip.read("word/numbering.xml"))
+        except KeyError:
+            return
+
+        def val(el, name):
+            c = el.find(w(name))
+            return c.get(w("val")) if c is not None else None
+
+        for an in nroot.findall(w("abstractNum")):
+            levels = {}
+            for lvl in an.findall(w("lvl")):
+                try:
+                    il = int(lvl.get(w("ilvl")))
+                except (TypeError, ValueError):
+                    continue
+                start = val(lvl, "start")
+                restart = val(lvl, "lvlRestart")
+                levels[il] = {
+                    "start": int(start) if start not in (None, "") else 1,
+                    "fmt": val(lvl, "numFmt") or "decimal",
+                    "text": val(lvl, "lvlText") or "",
+                    "suff": val(lvl, "suff") or "tab",
+                    "restart": int(restart) if restart not in (None, "") else None,
+                    "isLgl": lvl.find(w("isLgl")) is not None,
+                    "pStyle": val(lvl, "pStyle"),
+                }
+            self.abstract_nums[an.get(w("abstractNumId"))] = levels
+        for n in nroot.findall(w("num")):
+            ab = val(n, "abstractNumId")
+            overrides = {}
+            for o in n.findall(w("lvlOverride")):
+                so = o.find(w("startOverride"))
+                if so is not None:
+                    try:
+                        overrides[int(o.get(w("ilvl")))] = int(so.get(w("val")))
+                    except (TypeError, ValueError):
+                        pass
+            self.nums[n.get(w("numId"))] = {"abs": ab, "overrides": overrides}
+
+    def _para_numpr(self, p, pstyle):
+        """(numId, ilvl) של הפסקה — ישיר, ואם חסר אז מסגנון הפסקה; או None."""
+        num_id = ilvl = None
+        pPr = p.find(w("pPr"))
+        if pPr is not None:
+            np_ = pPr.find(w("numPr"))
+            if np_ is not None:
+                n = np_.find(w("numId"))
+                lv = np_.find(w("ilvl"))
+                if n is not None:
+                    num_id = n.get(w("val"))
+                if lv is not None:
+                    try:
+                        ilvl = int(lv.get(w("val")))
+                    except (TypeError, ValueError):
+                        pass
+        style_linked = None
+        if num_id is None or ilvl is None:
+            for sid in self._style_chain(pstyle):
+                sn = self.styles[sid].get("numPr")
+                if sn:
+                    if num_id is None and sn[0] is not None:
+                        num_id = sn[0]
+                        style_linked = sid
+                    if ilvl is None and sn[1] is not None:
+                        ilvl = sn[1]
+        if num_id is None or num_id == "0":
+            return None  # אין מספור (או numId=0 = ביטול מפורש)
+        if ilvl is None:
+            ilvl = 0
+            levels = self.abstract_nums.get(self.nums.get(num_id, {}).get("abs"), {})
+            for il, info in levels.items():
+                if style_linked and info["pStyle"] == style_linked:
+                    ilvl = il
+                    break
+        return num_id, ilvl
+
+    @staticmethod
+    def _is_section_mark(p):
+        """פסקה שהיא רק סימן מעבר קטע (w:sectPr בתוך w:pPr, בלי טקסט): וורד לא מקדם בה את
+        מונה הרשימה, גם כשיש עליה numPr (נמדד מול ListString: 'א]' ואחריה שוב 'א]')."""
+        pPr = p.find(w("pPr"))
+        if pPr is None or pPr.find(w("sectPr")) is None:
+            return False
+        return not "".join(t.text or "" for t in p.iter(w("t"))).strip()
+
+    @staticmethod
+    def _is_all_hidden(p, chars):
+        """פסקה שכל הטקסט שבה נסתר (יש w:t עם תוכן, ואף תו לא נפלט): וורד אינו מונה אותה ברשימה
+        (נמדד מול ListString: פסקת קטע נסתר בין '3.' ל‑'4.' אינה פריט ברשימה)."""
+        if any(c.strip() for c, _ in chars):
+            return False
+        return bool("".join(t.text or "" for t in p.iter(w("t"))).strip())
+
+    def _numbering_suffix(self, np_):
+        """מה שבא בין התווית לטקסט: רווח (טאב ורווח), או כלום (suff=nothing)."""
+        num = self.nums.get(np_[0])
+        levels = self.abstract_nums.get(num["abs"]) if num else None
+        if levels and np_[1] in levels and levels[np_[1]]["suff"] == "nothing":
+            return ""
+        return " "
+
+    def _number_label(self, num_id, ilvl):
+        """מקדם את מוני הרשימה ומחזיר את תווית הפסקה כפי שוורד מציג אותה
+        (למשל "יד)"), או "" אם הרמה ללא תווית. סופר גם פסקאות ריקות."""
+        num = self.nums.get(num_id)
+        if num is None:
+            return ""
+        levels = self.abstract_nums.get(num["abs"])
+        if not levels or ilvl not in levels:
+            return ""
+        # כל ה‑num של אותו abstractNum חולקים מוני רמות (נמדד מול ListString של וורד: רמה 2
+        # נמשכת מ'ג.' ל'ד.' גם מעבר ל‑num אחר עם startOverride). startOverride חל פעם אחת — בפסקה
+        # הראשונה של אותו num, ורק על הרמה של אותה פסקה.
+        counts = self._num_state.setdefault((self._num_story, num["abs"]), {})
+        info = levels[ilvl]
+
+        def start_of(lv):
+            if lv not in levels:
+                return 1
+            return levels[lv]["start"]
+
+        if (self._num_story, num_id) not in self._num_started:
+            self._num_started.add((self._num_story, num_id))
+            if ilvl in num["overrides"]:
+                counts[ilvl] = num["overrides"][ilvl] - 1  # הקידום שבהמשך נותן את ערך ההתחלה
+        counts[ilvl] = counts[ilvl] + 1 if ilvl in counts else start_of(ilvl)
+        # רמה עליונה שעוד לא הופיעה נחשבת כאילו הופיעה פעם אחת (ערך ההתחלה): כשיש פסקאות
+        # ברמה 3 ללא רמה 2 לפניהן, רמה 2 שאחריהן נקראת 'ב.' ולא 'א.' (נמדד מול ListString של וורד)
+        for upper in range(ilvl):
+            if upper in levels and upper not in counts:
+                counts[upper] = start_of(upper)
+        for deeper in range(ilvl + 1, 9):
+            if deeper not in counts or deeper not in levels:
+                continue
+            r = levels[deeper]["restart"]
+            if r is None or (r != 0 and ilvl < r):
+                del counts[deeper]
+
+        if info["fmt"] == "none":
+            return ""
+        if info["fmt"] == "bullet":
+            return _BULLETS.get(info["text"], info["text"])
+
+        def sub(m):
+            lv = int(m.group(1)) - 1
+            if lv not in levels:
+                return ""
+            n = counts.get(lv, start_of(lv))
+            fmt = "decimal" if info["isLgl"] else levels[lv]["fmt"]
+            return _format_number(n, fmt)
+
+        return re.sub(r"%([1-9])", sub, info["text"])
 
     # --------------------------------------------------- רמת כותרת של פסקה
     def _style_chain(self, sid):
@@ -498,6 +760,9 @@ class DocxConverter:
                 run = el.getparent()
             if not _is_para_content(el, p):
                 continue  # מחוק במעקב שינויים / ענף mc:Fallback / פסקה מקוננת
+            if (name in ("t", "tab", "br", "cr", "noBreakHyphen")
+                    and self._run_hidden(run, pstyle)):
+                continue  # טקסט נסתר (w:vanish) — אינו מוצג בוורד ואינו בספר
             if name == "footnoteRef":
                 skip_leading_ws = True
                 continue
@@ -574,6 +839,16 @@ class DocxConverter:
             pstyle = self._para_style(p)
             chars = self._par_chars(p, pstyle, notes_hp, {}, [],
                                     in_footnote=True)
+            np_ = self._para_numpr(p, pstyle)
+            if np_ is not None:
+                self._num_story = "fn"
+                try:
+                    label = self._number_label(*np_)
+                finally:
+                    self._num_story = "body"
+                if label and any(c.strip() for c, _ in chars):
+                    neutral = (False, False, False, False, False, notes_hp)
+                    chars = [[ch, neutral] for ch in label + self._numbering_suffix(np_)] + chars
             chars = _macro_passes(chars, notes_hp)
             if chars is None:
                 para_lines.append("")
@@ -609,17 +884,28 @@ class DocxConverter:
             level = self._para_heading_level(p)
             pstyle = self._para_style(p)
             refs = []
+            # מספור אוטומטי של וורד ("יד)") — המונים מתקדמים גם בפסקה ריקה
+            label = ""
+            chars = self._par_chars(p, pstyle, normal_hp, fn_map, refs)
+            np_ = self._para_numpr(p, pstyle)
+            if (np_ is not None and not self._is_section_mark(p)
+                    and not self._is_all_hidden(p, chars)):
+                label = self._number_label(*np_)
             if level is not None:
-                chars = self._par_chars(p, pstyle, normal_hp, fn_map, refs)
                 chars = _strip_line_end_spaces(chars)
                 text = self._finalize(chars, refs).replace("\n", " ")
                 text = text.lstrip(" \t")
                 if not text:
                     paras.append(None)
                     continue
+                if label:
+                    text = label + self._numbering_suffix(np_) + text
                 paras.append("<h%d>%s</h%d>" % (level, text, level))
             else:
-                chars = self._par_chars(p, pstyle, normal_hp, fn_map, refs)
+                if label and any(c.strip() for c, _ in chars):
+                    neutral = (False, False, False, False, False, normal_hp)
+                    sep = self._numbering_suffix(np_)
+                    chars = [[ch, neutral] for ch in label + sep] + chars
                 chars = _macro_passes(chars, normal_hp)
                 if chars is None:
                     paras.append(None)
